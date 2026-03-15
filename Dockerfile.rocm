@@ -1,0 +1,46 @@
+# PhysicsNeMo-ROCm  —  AMD GPU base image
+# Tested with ROCm 6.2 / PyTorch 2.4+
+#
+# Build:
+#   docker build -f Dockerfile.rocm -t physicsnemo-rocm:latest .
+#
+# Run (requires --device=/dev/kfd --device=/dev/dri and proper group membership):
+#   docker run --rm -it \
+#       --device=/dev/kfd --device=/dev/dri \
+#       --group-add video --group-add render \
+#       -v $(pwd):/workspace \
+#       physicsnemo-rocm:latest bash
+
+FROM rocm/pytorch:rocm6.2_ubuntu22.04_py3.10_pytorch_release_2.4.0
+
+# GPU targets — edit to match your hardware:
+#   gfx906  = MI50/MI60  (Vega20)
+#   gfx908  = MI100      (CDNA1)
+#   gfx90a  = MI200      (CDNA2)
+#   gfx940/941/942 = MI300 (CDNA3)
+#   gfx1030 = RX 6800 XT (RDNA2)
+#   gfx1100 = RX 7900 XTX (RDNA3)
+ENV ROCM_TARGET_LST="gfx906;gfx908;gfx90a;gfx1030;gfx1100"
+ENV PYTORCH_ROCM_ARCH="${ROCM_TARGET_LST}"
+
+WORKDIR /workspace
+
+# System packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git build-essential cmake \
+        libopenmpi-dev openmpi-bin \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy project and install
+COPY . /workspace/physicsnemo-rocm
+WORKDIR /workspace/physicsnemo-rocm
+
+# Install package (torch already in base image)
+RUN pip install --no-cache-dir -e ".[datapipes,dev]"
+
+# Environment: RCCL (AMD's NCCL equivalent) is used automatically via
+# PyTorch's nccl backend — no code changes needed.
+ENV NCCL_DEBUG=INFO
+ENV HSA_OVERRIDE_GFX_VERSION=""
+
+CMD ["python", "-c", "import physicsnemo; print('PhysicsNeMo-ROCm', physicsnemo.__version__)"]

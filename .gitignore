@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environment
+.venv/
+
+# Data & checkpoints (can be large)
+projects/*/data/
+projects/*/checkpoints/
+projects/*/results/*.png
+projects/*/results/*.gif
+*.npz
+*.pt
+
+# Misc
+.DS_Store
+*.log
+solver_demo.png
+.claude
