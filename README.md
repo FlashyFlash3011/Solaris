@@ -15,6 +15,7 @@ Runs on AMD GPUs via PyTorch's ROCm/HIP backend.  The `torch.cuda.*` API is iden
 | CDNA3 (gfx940/941/942) | MI300 series |
 | RDNA2 (gfx1030) | RX 6800/6900 XT |
 | RDNA3 (gfx1100) | RX 7900 XTX/XT |
+| RDMA4 (gfx1200) | RX 9070/XT
 
 ---
 
