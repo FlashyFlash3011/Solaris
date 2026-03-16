@@ -21,6 +21,24 @@ Built for AMD GPUs (RDNA2 through RDNA4, CDNA1 through CDNA3). Drop-in compatibl
 
 ---
 
+## Results
+
+**Chip thermal simulation** — power map → temperature field
+
+![Chip Thermal Benchmark](assets/benchmark_results.png)
+
+> Each column shows the error vs the ground-truth FD solver. Neural methods run in ~2ms vs ~44ms for the solver, at ~1% error.
+
+**Water heat diffusion** — time-evolving temperature field
+
+![Water Heat Diffusion](assets/water_heat_diffusion.png)
+
+**Weather forecasting** — multi-day atmospheric prediction
+
+![Weather Forecast](assets/weather_forecast.png)
+
+---
+
 ## Supported AMD GPU Architectures
 
 | Architecture | GPUs |
