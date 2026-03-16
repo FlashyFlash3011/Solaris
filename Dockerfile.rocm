@@ -1,26 +1,27 @@
-# PhysicsNeMo-ROCm  —  AMD GPU base image
+# Solaris — AMD GPU base image
 # Tested with ROCm 6.2 / PyTorch 2.4+
 #
 # Build:
-#   docker build -f Dockerfile.rocm -t physicsnemo-rocm:latest .
+#   docker build -f Dockerfile.rocm -t solaris:latest .
 #
 # Run (requires --device=/dev/kfd --device=/dev/dri and proper group membership):
 #   docker run --rm -it \
 #       --device=/dev/kfd --device=/dev/dri \
 #       --group-add video --group-add render \
 #       -v $(pwd):/workspace \
-#       physicsnemo-rocm:latest bash
+#       solaris:latest bash
 
 FROM rocm/pytorch:rocm6.2_ubuntu22.04_py3.10_pytorch_release_2.4.0
 
 # GPU targets — edit to match your hardware:
-#   gfx906  = MI50/MI60  (Vega20)
-#   gfx908  = MI100      (CDNA1)
-#   gfx90a  = MI200      (CDNA2)
-#   gfx940/941/942 = MI300 (CDNA3)
-#   gfx1030 = RX 6800 XT (RDNA2)
-#   gfx1100 = RX 7900 XTX (RDNA3)
-ENV ROCM_TARGET_LST="gfx906;gfx908;gfx90a;gfx1030;gfx1100"
+#   gfx906  = MI50/MI60        (Vega20)
+#   gfx908  = MI100            (CDNA1)
+#   gfx90a  = MI200            (CDNA2)
+#   gfx940/941/942 = MI300     (CDNA3)
+#   gfx1030 = RX 6800 XT      (RDNA2)
+#   gfx1100 = RX 7900 XTX     (RDNA3)
+#   gfx1200 = RX 9070/XT      (RDNA4)
+ENV ROCM_TARGET_LST="gfx906;gfx908;gfx90a;gfx1030;gfx1100;gfx1200"
 ENV PYTORCH_ROCM_ARCH="${ROCM_TARGET_LST}"
 
 WORKDIR /workspace
@@ -32,8 +33,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy project and install
-COPY . /workspace/physicsnemo-rocm
-WORKDIR /workspace/physicsnemo-rocm
+COPY . /workspace/solaris
+WORKDIR /workspace/solaris
 
 # Install package (torch already in base image)
 RUN pip install --no-cache-dir -e ".[datapipes,dev]"
@@ -43,4 +44,4 @@ RUN pip install --no-cache-dir -e ".[datapipes,dev]"
 ENV NCCL_DEBUG=INFO
 ENV HSA_OVERRIDE_GFX_VERSION=""
 
-CMD ["python", "-c", "import physicsnemo; print('PhysicsNeMo-ROCm', physicsnemo.__version__)"]
+CMD ["python", "-c", "import solaris; print('Solaris', solaris.__version__)"]

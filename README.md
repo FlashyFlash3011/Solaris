@@ -1,6 +1,6 @@
 # Solaris
 
-A Physics AI framework for AMD GPUs, based on the architecture of [NVIDIA Solaris](https://github.com/NVIDIA/solaris).
+A Physics AI framework for AMD GPUs, based on the architecture of [NVIDIA PhysicsNeMo](https://github.com/NVIDIA/physicsnemo).
 
 Runs on AMD GPUs via PyTorch's ROCm/HIP backend.  The `torch.cuda.*` API is identical whether you run ROCm or CUDA — PyTorch handles the translation transparently.  Distributed collectives go through **RCCL** (AMD's NCCL equivalent), exposed via PyTorch's `"nccl"` backend name.
 
@@ -15,7 +15,7 @@ Runs on AMD GPUs via PyTorch's ROCm/HIP backend.  The `torch.cuda.*` API is iden
 | CDNA3 (gfx940/941/942) | MI300 series |
 | RDNA2 (gfx1030) | RX 6800/6900 XT |
 | RDNA3 (gfx1100) | RX 7900 XTX/XT |
-| RDMA4 (gfx1200) | RX 9070/XT
+| RDNA4 (gfx1200) | RX 9070/9070 XT |
 
 ---
 
@@ -89,6 +89,11 @@ docker run --rm -it \
 | AFNO | `solaris.models.AFNO` | Adaptive Fourier Neural Operator |
 | MeshGraphNet | `solaris.models.MeshGraphNet` | Graph network for mesh-based simulations |
 | FullyConnected | `solaris.models.FullyConnected` | MLP for PINNs |
+| ConstrainedFNO | `solaris.models.ConstrainedFNO` | FNO with hard physics constraint enforcement |
+| MultiScaleFNO | `solaris.models.MultiScaleFNO` | Multi-frequency FNO with cross-scale attention |
+| NeuralResidualCorrector | `solaris.models.NeuralResidualCorrector` | Hybrid coarse solver + learned error correction |
+| ConformalNeuralOperator | `solaris.models.ConformalNeuralOperator` | Any model with guaranteed uncertainty intervals |
+| CoupledOperator | `solaris.models.CoupledOperator` | Multi-physics operator composition |
 
 ---
 
