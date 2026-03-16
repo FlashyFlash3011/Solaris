@@ -4,6 +4,21 @@ A Physics AI framework for AMD GPUs, based on the architecture of [NVIDIA Physic
 
 Runs on AMD GPUs via PyTorch's ROCm/HIP backend.  The `torch.cuda.*` API is identical whether you run ROCm or CUDA — PyTorch handles the translation transparently.  Distributed collectives go through **RCCL** (AMD's NCCL equivalent), exposed via PyTorch's `"nccl"` backend name.
 
+## TL;DR
+
+Traditional physics simulators are accurate but slow — they grind through thousands of calculation steps every time you change a design. Solaris trains neural networks on solved simulation examples so they can predict new results **instantly**, without re-running the solver from scratch.
+
+On a chip thermal design problem: **20× faster than the simulator, ~1% error, runs on AMD GPUs.**
+
+Five original research contributions on top of the standard approach:
+- **Hard physics constraints** — the network mathematically cannot output results that break physics laws
+- **Residual correction** — runs a quick coarse simulation first, then uses the network only to fix its mistakes
+- **Multi-scale attention** — separate specialist "heads" for large-scale patterns and fine details
+- **Calibrated uncertainty** — gives guaranteed confidence intervals, not just a single number
+- **Multi-physics coupling** — multiple networks (heat, fluid, structure) that talk to each other
+
+Built for AMD GPUs (RDNA2 through RDNA4, CDNA1 through CDNA3). Drop-in compatible with NVIDIA CUDA via the same `torch.cuda` API.
+
 ---
 
 ## Supported AMD GPU Architectures

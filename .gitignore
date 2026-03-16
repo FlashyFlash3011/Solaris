@@ -22,3 +22,9 @@ projects/*/results/*.gif
 *.log
 solver_demo.png
 .claude
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
