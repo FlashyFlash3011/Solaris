@@ -1,6 +1,6 @@
-# PhysicsNeMo-ROCm
+# Solaris
 
-A Physics AI framework for AMD GPUs, based on the architecture of [NVIDIA PhysicsNeMo](https://github.com/NVIDIA/physicsnemo).
+A Physics AI framework for AMD GPUs, based on the architecture of [NVIDIA Solaris](https://github.com/NVIDIA/solaris).
 
 Runs on AMD GPUs via PyTorch's ROCm/HIP backend.  The `torch.cuda.*` API is identical whether you run ROCm or CUDA — PyTorch handles the translation transparently.  Distributed collectives go through **RCCL** (AMD's NCCL equivalent), exposed via PyTorch's `"nccl"` backend name.
 
@@ -36,8 +36,8 @@ pip install -e ".[dev]"
 ### 2. Verify ROCm
 
 ```python
-import torch, physicsnemo
-print(physicsnemo.get_gpu_backend())   # "rocm" on AMD, "cuda" on NVIDIA, "cpu" otherwise
+import torch, solaris
+print(solaris.get_gpu_backend())   # "rocm" on AMD, "cuda" on NVIDIA, "cpu" otherwise
 print(torch.cuda.is_available())       # True on ROCm
 print(torch.cuda.get_device_name(0))   # AMD GPU name
 ```
@@ -70,13 +70,13 @@ torchrun --nproc_per_node=4 examples/train_fno_darcy.py --device cuda
 
 ```bash
 # Build
-docker build -f Dockerfile.rocm -t physicsnemo-rocm:latest .
+docker build -f Dockerfile.rocm -t solaris:latest .
 
 # Run — requires /dev/kfd, /dev/dri access
 docker run --rm -it \
     --device=/dev/kfd --device=/dev/dri \
     --group-add video --group-add render \
-    physicsnemo-rocm:latest bash
+    solaris:latest bash
 ```
 
 ---
@@ -85,17 +85,17 @@ docker run --rm -it \
 
 | Model | Class | Description |
 |---|---|---|
-| FNO | `physicsnemo.models.FNO` | Fourier Neural Operator (1D/2D/3D) |
-| AFNO | `physicsnemo.models.AFNO` | Adaptive Fourier Neural Operator |
-| MeshGraphNet | `physicsnemo.models.MeshGraphNet` | Graph network for mesh-based simulations |
-| FullyConnected | `physicsnemo.models.FullyConnected` | MLP for PINNs |
+| FNO | `solaris.models.FNO` | Fourier Neural Operator (1D/2D/3D) |
+| AFNO | `solaris.models.AFNO` | Adaptive Fourier Neural Operator |
+| MeshGraphNet | `solaris.models.MeshGraphNet` | Graph network for mesh-based simulations |
+| FullyConnected | `solaris.models.FullyConnected` | MLP for PINNs |
 
 ---
 
 ## Architecture Overview
 
 ```
-physicsnemo/
+solaris/
 ├── core/          # Module base class, ModelMetaData, ModelRegistry
 ├── models/        # FNO, AFNO, MeshGraphNet, FullyConnected
 ├── nn/            # Spectral convolutions, activations, embeddings

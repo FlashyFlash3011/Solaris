@@ -23,7 +23,7 @@ def get_logger(name: Optional[str] = None, level: str = "INFO"):
     fmt = (
         "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
         "<level>{level: <8}</level> | "
-        f"<cyan>{name or 'physicsnemo'}</cyan> | "
+        f"<cyan>{name or 'solaris'}</cyan> | "
         "<level>{message}</level>"
     )
     _logger.add(sys.stderr, format=fmt, level=level, colorize=True)

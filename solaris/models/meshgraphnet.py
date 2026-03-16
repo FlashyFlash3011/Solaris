@@ -15,8 +15,8 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
-from physicsnemo.core.meta import ModelMetaData
-from physicsnemo.core.module import Module
+from solaris.core.meta import ModelMetaData
+from solaris.core.module import Module
 
 
 def _mlp(in_dim: int, hidden_dim: int, out_dim: int, n_layers: int = 2) -> nn.Sequential:

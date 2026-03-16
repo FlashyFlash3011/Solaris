@@ -33,9 +33,9 @@ from torch.utils.data import DataLoader, TensorDataset
 # Allow importing from project directories
 sys.path.insert(0, str(Path(__file__).parent.parent / "projects" / "chip_thermal"))
 
-from physicsnemo.models import FNO, NeuralResidualCorrector
-from physicsnemo.metrics import relative_l2_error
-from physicsnemo.utils import get_logger
+from solaris.models import FNO, NeuralResidualCorrector
+from solaris.metrics import relative_l2_error
+from solaris.utils import get_logger
 
 
 def make_coarse_solver(n_iter: int, tol: float = 1e-3):

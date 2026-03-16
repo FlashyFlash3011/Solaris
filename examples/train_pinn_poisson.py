@@ -15,8 +15,8 @@ import argparse
 import torch
 import torch.nn as nn
 
-from physicsnemo.models.mlp import FullyConnected
-from physicsnemo.utils import get_logger
+from solaris.models.mlp import FullyConnected
+from solaris.utils import get_logger
 
 
 def f(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:

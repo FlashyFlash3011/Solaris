@@ -21,10 +21,10 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-import physicsnemo
-from physicsnemo.models import ConstrainedFNO, FNO
-from physicsnemo.metrics import relative_l2_error
-from physicsnemo.utils import get_logger
+import solaris
+from solaris.models import ConstrainedFNO, FNO
+from solaris.metrics import relative_l2_error
+from solaris.utils import get_logger
 
 
 def synthetic_darcy(n: int, res: int, seed: int = 0):
@@ -67,7 +67,7 @@ def train(args):
     device = torch.device(
         args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu"
     )
-    log.info(f"Device: {device}  |  PhysicsNeMo {physicsnemo.__version__}")
+    log.info(f"Device: {device}  |  PhysicsNeMo {solaris.__version__}")
 
     K, P = synthetic_darcy(args.n_train + args.n_val, args.res)
     K_t = torch.as_tensor(K)

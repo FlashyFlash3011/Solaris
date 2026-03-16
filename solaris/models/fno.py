@@ -8,9 +8,9 @@ from typing import List, Optional
 import torch
 import torch.nn as nn
 
-from physicsnemo.core.meta import ModelMetaData
-from physicsnemo.core.module import Module
-from physicsnemo.nn.spectral import SpectralConv1d, SpectralConv2d, SpectralConv3d
+from solaris.core.meta import ModelMetaData
+from solaris.core.module import Module
+from solaris.nn.spectral import SpectralConv1d, SpectralConv2d, SpectralConv3d
 
 
 class FNOBlock1d(nn.Module):

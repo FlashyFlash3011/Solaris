@@ -27,9 +27,9 @@ from typing import Callable, Optional
 import torch
 import torch.nn as nn
 
-from physicsnemo.core.meta import ModelMetaData
-from physicsnemo.core.module import Module
-from physicsnemo.models.fno import FNOBlock2d
+from solaris.core.meta import ModelMetaData
+from solaris.core.module import Module
+from solaris.models.fno import FNOBlock2d
 
 
 class NeuralResidualCorrector(Module):

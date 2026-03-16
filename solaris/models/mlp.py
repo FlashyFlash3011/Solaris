@@ -8,9 +8,9 @@ from typing import List, Optional, Type
 import torch
 import torch.nn as nn
 
-from physicsnemo.core.meta import ModelMetaData
-from physicsnemo.core.module import Module
-from physicsnemo.nn.activations import Stan
+from solaris.core.meta import ModelMetaData
+from solaris.core.module import Module
+from solaris.nn.activations import Stan
 
 
 class FullyConnected(Module):

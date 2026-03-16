@@ -24,9 +24,9 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from physicsnemo.models.afno import AFNO
-from physicsnemo.metrics import relative_l2_error
-from physicsnemo.utils import get_logger, save_checkpoint
+from solaris.models.afno import AFNO
+from solaris.metrics import relative_l2_error
+from solaris.utils import get_logger, save_checkpoint
 from data_gen import make_initial_state, simulate
 
 

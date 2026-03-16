@@ -21,9 +21,9 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from physicsnemo.models.fno import FNO
-from physicsnemo.utils import get_logger
-from physicsnemo.utils.checkpoint import load_checkpoint
+from solaris.models.fno import FNO
+from solaris.utils import get_logger
+from solaris.utils.checkpoint import load_checkpoint
 from solver import random_power_map, solve_heat
 
 

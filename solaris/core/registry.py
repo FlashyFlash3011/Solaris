@@ -6,17 +6,17 @@
 from importlib.metadata import entry_points
 from typing import Dict, Optional, Type
 
-from physicsnemo.core.module import Module
+from solaris.core.module import Module
 
 
 class ModelRegistry:
     """Singleton registry that discovers PhysicsNeMo models via entry points.
 
     Entry points should be declared in ``pyproject.toml`` under the group
-    ``physicsnemo.models``::
+    ``solaris.models``::
 
-        [project.entry-points."physicsnemo.models"]
-        fno = "physicsnemo.models.fno:FNO"
+        [project.entry-points."solaris.models"]
+        fno = "solaris.models.fno:FNO"
     """
 
     _instance: Optional["ModelRegistry"] = None
@@ -29,7 +29,7 @@ class ModelRegistry:
         return cls._instance
 
     def _discover(self) -> None:
-        eps = entry_points(group="physicsnemo.models")
+        eps = entry_points(group="solaris.models")
         for ep in eps:
             try:
                 self._registry[ep.name] = ep.load()

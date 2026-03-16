@@ -26,8 +26,8 @@ import matplotlib.gridspec as gridspec
 import matplotlib.ticker as mticker
 from matplotlib.colors import Normalize
 
-from physicsnemo.models.afno import AFNO
-from physicsnemo.utils import get_logger
+from solaris.models.afno import AFNO
+from solaris.utils import get_logger
 from data_gen import make_initial_state, simulate
 
 

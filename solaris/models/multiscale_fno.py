@@ -31,8 +31,8 @@ from typing import List
 import torch
 import torch.nn as nn
 
-from physicsnemo.core.meta import ModelMetaData
-from physicsnemo.core.module import Module
+from solaris.core.meta import ModelMetaData
+from solaris.core.module import Module
 
 
 class BandSpectralConv2d(nn.Module):

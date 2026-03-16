@@ -3,8 +3,8 @@
 
 import torch
 import pytest
-from physicsnemo.core import Module, ModelMetaData, ModelRegistry
-from physicsnemo.models.mlp import FullyConnected
+from solaris.core import Module, ModelMetaData, ModelRegistry
+from solaris.models.mlp import FullyConnected
 
 
 class DummyModel(Module):

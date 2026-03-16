@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional, Union
 import torch
 import torch.nn as nn
 
-from physicsnemo.core.meta import ModelMetaData
+from solaris.core.meta import ModelMetaData
 
 
 class Module(nn.Module):
@@ -27,7 +27,7 @@ class Module(nn.Module):
         Model metadata. Defaults to a blank ``ModelMetaData`` instance.
     """
 
-    _physicsnemo_version: str = "0.1.0"
+    _solaris_version: str = "0.1.0"
 
     def __init__(self, meta: Optional[ModelMetaData] = None) -> None:
         super().__init__()
@@ -59,7 +59,7 @@ class Module(nn.Module):
                 "state_dict": self.state_dict(),
                 "init_args": self._init_args,
                 "class": f"{self.__class__.__module__}.{self.__class__.__qualname__}",
-                "physicsnemo_version": self._physicsnemo_version,
+                "solaris_version": self._solaris_version,
             },
             path,
         )

@@ -25,8 +25,8 @@ import matplotlib.gridspec as gridspec
 from matplotlib.colors import Normalize
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
-from physicsnemo.models.fno import FNO
-from physicsnemo.utils import get_logger
+from solaris.models.fno import FNO
+from solaris.utils import get_logger
 from solver import make_initial_field, solve_diffusion, ALPHA_WATER
 
 

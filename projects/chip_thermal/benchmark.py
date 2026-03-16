@@ -38,9 +38,9 @@ from torch.utils.data import DataLoader, TensorDataset
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from physicsnemo.models import FNO, ConstrainedFNO, NeuralResidualCorrector
-from physicsnemo.metrics import relative_l2_error
-from physicsnemo.utils import get_logger
+from solaris.models import FNO, ConstrainedFNO, NeuralResidualCorrector
+from solaris.metrics import relative_l2_error
+from solaris.utils import get_logger
 from solver import random_power_map, solve_heat
 
 

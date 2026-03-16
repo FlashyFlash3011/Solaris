@@ -28,8 +28,8 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from physicsnemo.models import FNO, ConformalNeuralOperator
-from physicsnemo.utils import get_logger
+from solaris.models import FNO, ConformalNeuralOperator
+from solaris.utils import get_logger
 
 
 def synthetic_darcy(n: int, res: int, seed: int = 0):

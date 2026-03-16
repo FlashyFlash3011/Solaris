@@ -1,7 +1,7 @@
-from physicsnemo.nn.activations import CappedGELU, CappedLeakyReLU, Siren, Stan
-from physicsnemo.nn.embeddings import FourierEmbedding, PositionalEmbedding, SinusoidalTimestepEmbedding
-from physicsnemo.nn.spectral import SpectralConv1d, SpectralConv2d, SpectralConv3d
-from physicsnemo.nn.constraints import (
+from solaris.nn.activations import CappedGELU, CappedLeakyReLU, Siren, Stan
+from solaris.nn.embeddings import FourierEmbedding, PositionalEmbedding, SinusoidalTimestepEmbedding
+from solaris.nn.spectral import SpectralConv1d, SpectralConv2d, SpectralConv3d
+from solaris.nn.constraints import (
     DivergenceFreeProjection2d,
     ConservationProjection,
     SpectralBandFilter,

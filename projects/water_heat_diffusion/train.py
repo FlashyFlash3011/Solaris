@@ -25,9 +25,9 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from physicsnemo.models.fno import FNO
-from physicsnemo.metrics import relative_l2_error
-from physicsnemo.utils import get_logger, save_checkpoint
+from solaris.models.fno import FNO
+from solaris.metrics import relative_l2_error
+from solaris.utils import get_logger, save_checkpoint
 from solver import make_initial_field, solve_diffusion, ALPHA_WATER
 
 

@@ -18,9 +18,9 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from physicsnemo.models.fno import FNO
-from physicsnemo.metrics import relative_l2_error, rmse
-from physicsnemo.utils import get_logger, save_checkpoint
+from solaris.models.fno import FNO
+from solaris.metrics import relative_l2_error, rmse
+from solaris.utils import get_logger, save_checkpoint
 
 
 def generate_darcy_data(n_samples: int = 512, resolution: int = 64, seed: int = 42):

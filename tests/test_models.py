@@ -3,7 +3,7 @@
 
 import torch
 import pytest
-from physicsnemo.models import FNO, AFNO, FullyConnected, MeshGraphNet
+from solaris.models import FNO, AFNO, FullyConnected, MeshGraphNet
 
 
 @pytest.mark.parametrize("dim,shape", [

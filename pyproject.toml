@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "physicsnemo-rocm"
+name = "solaris-rocm"
 version = "0.1.0"
-description = "Physics AI framework for AMD GPUs via ROCm"
+description = "Physics AI framework for AMD GPUs via ROCm — Solaris"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10,<3.13"
@@ -46,17 +46,17 @@ dev = [
     "pre-commit>=3.3.0",
 ]
 
-[project.entry-points."physicsnemo.models"]
-fno = "physicsnemo.models.fno:FNO"
-afno = "physicsnemo.models.afno:AFNO"
-mlp = "physicsnemo.models.mlp:FullyConnected"
-meshgraphnet = "physicsnemo.models.meshgraphnet:MeshGraphNet"
+[project.entry-points."solaris.models"]
+fno = "solaris.models.fno:FNO"
+afno = "solaris.models.afno:AFNO"
+mlp = "solaris.models.mlp:FullyConnected"
+meshgraphnet = "solaris.models.meshgraphnet:MeshGraphNet"
 
 [tool.hatch.build.targets.wheel]
-packages = ["physicsnemo"]
+packages = ["solaris"]
 
 [tool.hatch.build.targets.sdist]
-include = ["physicsnemo", "tests", "examples"]
+include = ["solaris", "tests", "examples"]
 
 [[tool.uv.index]]
 name = "rocm"
@@ -76,4 +76,4 @@ select = ["E", "F", "I", "UP"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=physicsnemo --cov-report=term-missing"
+addopts = "--cov=solaris --cov-report=term-missing"

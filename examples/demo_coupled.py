@@ -29,9 +29,9 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from physicsnemo.models import FNO, CoupledOperator
-from physicsnemo.metrics import relative_l2_error
-from physicsnemo.utils import get_logger
+from solaris.models import FNO, CoupledOperator
+from solaris.metrics import relative_l2_error
+from solaris.utils import get_logger
 
 
 def generate_coupled_data(n: int, res: int, seed: int = 0):

@@ -21,9 +21,9 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from physicsnemo.models import FNO, MultiScaleFNO
-from physicsnemo.metrics import relative_l2_error
-from physicsnemo.utils import get_logger
+from solaris.models import FNO, MultiScaleFNO
+from solaris.metrics import relative_l2_error
+from solaris.utils import get_logger
 
 
 def multiscale_darcy(n: int, res: int, seed: int = 0):
