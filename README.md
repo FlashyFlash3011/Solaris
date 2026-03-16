@@ -19,6 +19,8 @@ Five original research contributions on top of the standard approach:
 
 Built for AMD GPUs (RDNA2 through RDNA4, CDNA1 through CDNA3). Drop-in compatible with NVIDIA CUDA via the same `torch.cuda` API.
 
+> **Note:** All benchmarks and demo projects use **synthetically generated data** and a **simple finite-difference solver written from scratch** — not real-world engineering datasets or commercial simulation software (e.g. ANSYS, COMSOL). The physics problems (chip heat, water diffusion, weather) are real, but the data is procedurally generated to demonstrate the framework. Results on real-world problems may differ.
+
 ---
 
 ## Results
