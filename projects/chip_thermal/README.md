@@ -1,27 +1,16 @@
-# Chip Thermal Prediction — 3-D Real-Time Heat Simulation
+# Chip Thermal Prediction — FD Solver vs FNO Surrogate
 
-Simulate transient heat flow through a silicon die (x, y, z) from cold start,
-and learn a fast FNO surrogate that predicts the full volumetric temperature
-field at any time during the first 10 ms.
+Predict steady-state temperature distribution across a chip given its power map.
 
 ```
-ρCp ∂T/∂t = k ∇²T + Q(x,y,z)
-
-Domain  : 1 mm × 1 mm × 0.5 mm
-Grid    : 32 × 32 × 16
-α       : 8.8×10⁻⁵ m²/s  (silicon)
-Time    : 0 → 10 ms
-IC      : T = 25 °C  (cold start)
-BC      : Dirichlet T = 25 °C on bottom + four lateral faces (heat sink)
-          Neumann ∂T/∂z = 0  (adiabatic) on top face
-Q       : Gaussian hotspots up to 10⁹ W/m³
+-k ∇²T = Q(x,y)    on [0,1]²
+ T = 25°C           on boundary
 ```
 
-**Without AI** (`solver.py`): explicit finite-difference, ~5–30 s per simulation (12 000+ time steps).
-**With AI** (`train.py` + `compare.py`): FNO-3D surrogate, <20 ms per simulation — **500–2000× faster**.
+**Without PhysicsNeMo** (`solver.py`): iterative finite-difference, ~0.5–2s per design.
+**With PhysicsNeMo** (`train.py` + `compare.py`): FNO surrogate, <5ms per design — **100–500× faster**.
 
-Real use case: die architects run thousands of 3-D layout variants to optimise
-thermals in tight power-budget designs. The surrogate makes that loop real-time.
+Real use case: thermal engineers run thousands of layout variants to find the design that keeps the chip coolest. The surrogate makes that loop real-time.
 
 ---
 
@@ -30,88 +19,54 @@ thermals in tight power-budget designs. The surrogate makes that loop real-time.
 ```bash
 cd projects/chip_thermal
 
-# Step 0 — install matplotlib if you want plots / animations
-pip install matplotlib pillow
+# Step 0 — install matplotlib if you want plots
+pip install matplotlib
 
-# Step 1 — sanity-check the solver alone (no ML needed)
-python3.11 solver.py
-# → saves solver_demo.png  (2-D demo) and  solver_3d_demo.png  (3-D demo)
+# Step 1 — sanity-check the solver alone (no PhysicsNeMo needed)
+python solver.py
+# → saves solver_demo.png
 
-# Step 2 — generate 3-D transient data + train FNO surrogate
-python3.11 train.py --device cuda --n_sim 300 --epochs 80
-# Generates 300 simulations × 8 time snapshots via solver → 2400 samples.
-# Cached in data/thermal_3d_dataset.npz so it won't regenerate on next run.
-# Saves checkpoints/best_fno_3d.pt  and  checkpoints/norm_stats_3d.npz
+# Step 2 — generate data + train FNO surrogate (~5 min on GPU)
+python train.py --device cuda --n_train 800 --n_val 200 --epochs 50
+# Generates 1000 (power_map, temperature) pairs via solver, then trains.
+# Cached in data/thermal_dataset.npz so it won't regenerate next run.
+# Saves checkpoints/best_fno.pt
 
-# Quick smoke-test (10 sims, 5 epochs — completes in under 2 min on CPU)
-python3.11 train.py --n_sim 10 --epochs 5
-
-# Step 3 — head-to-head benchmark
-python3.11 compare.py --device cuda --n 20
-# → prints timing + error table, saves results/compare_3d_1.png … _3.png
-
-# Step 4 — animated visualisation
-python3.11 visualize.py --device cuda
-# → saves results/chip_thermal_3d.gif
+# Step 3 — head-to-head comparison
+python compare.py --device cuda --n 20
+# → prints timing table + saves results/compare.png
 ```
 
 ### CPU-only (no GPU)
 
 ```bash
-python3.11 train.py --device cpu --n_sim 50 --epochs 30
-python3.11 compare.py --device cpu --n 5
-python3.11 visualize.py --device cpu
+python train.py --device cpu --n_train 400 --n_val 100 --epochs 30
+python compare.py --device cpu --n 10
 ```
 
 ---
 
 ## What you'll see
 
-### Benchmark table (`compare.py`)
-
 ```
    #    Solver (s)    FNO (ms)    Speedup    Rel-L2
----------------------------------------------------------
-   1         8.312       12.41      670×      0.0243
-   2         9.105       12.38      735×      0.0218
-   3         7.891       12.44      635×      0.0271
+-------------------------------------------------------
+   1         0.847        3.21      264×      0.0183
+   2         0.931        3.18      293×      0.0201
+   3         0.712        3.20      223×      0.0157
   ...
-=========================================================
-  Solver  avg: 8.77s
-  FNO     avg: 12.4ms
-  Speedup avg: 707×
-  Rel-L2  avg: 0.0241  (max 0.0389)
+======================================================
+  Solver   avg: 0.841s
+  FNO      avg: 3.21ms
+  Speedup  avg: 262×
+  Rel-L2   avg: 0.0189  (max 0.0312)
 ```
 
-### Slice-panel figure (`compare_3d_N.png`)
-
-Three rows, one per cut plane, four columns:
-
-| Col 1 | Col 2 | Col 3 | Col 4 |
-|---|---|---|---|
-| Q map [W/m³] | FD Solver T [°C] | FNO T [°C] | \|Error\| |
-
-Rows: XY mid-plane · XZ mid-plane · YZ mid-plane.
-
-### Animated GIF (`chip_thermal_3d.gif`)
-
-3 rows × 2 cols cycling through 8 time snapshots (0–10 ms), comparing solver
-and FNO side-by-side for each cut plane.
-
----
-
-## Old 2-D vs New 3-D
-
-| Feature | 2-D Steady-State (old) | 3-D Transient (new) |
-|---|---|---|
-| Physics | Steady-state Poisson | Transient heat equation |
-| Grid | 64 × 64 | 32 × 32 × 16 |
-| Solver | Gauss-Seidel iterative | Explicit FD (12 000+ steps) |
-| Solver time | 0.5–2 s/design | 5–30 s/simulation |
-| Model | FNO-2D, 1-channel in | FNO-3D, 2-channel in (Q + t) |
-| Inputs | Q(x,y) | Q(x,y,z) + time t |
-| Output | T(x,y) at equilibrium | T(x,y,z) at any t ∈ [0, 10ms] |
-| Typical speedup | 100–500× | 500–2000× |
+`compare.png` shows four columns per sample:
+1. Power map (where heat is generated)
+2. Ground-truth temperature (from solver)
+3. FNO prediction
+4. Absolute error
 
 ---
 
@@ -119,9 +74,9 @@ and FNO side-by-side for each cut plane.
 
 | Flag | Default | Notes |
 |---|---|---|
-| `--n_sim` | 300 | More sims → lower error |
-| `--epochs` | 80 | More epochs → lower error |
-| `--hidden` | 32 | FNO channel width (increase for more capacity) |
-| `--modes` | 8 | Fourier modes kept per dimension |
+| `--resolution` | 64 | Grid size. 128 needs more training data. |
+| `--n_train` | 800 | More data → lower error |
+| `--epochs` | 50 | More epochs → lower error |
+| `--hidden` | 64 | FNO channel width |
+| `--modes` | 16 | Fourier modes kept |
 | `--n_layers` | 4 | FNO depth |
-| `--n_times` | 8 | Snapshot count per simulation |
