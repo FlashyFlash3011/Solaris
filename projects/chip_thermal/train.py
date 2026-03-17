@@ -1,38 +1,23 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024, Contributors
 # SPDX-License-Identifier: Apache-2.0
 """
-Train a 3-D transient FNO surrogate for chip heat conduction.
-
-The model maps a volumetric power map Q(x,y,z) and a normalised time t to
-the temperature rise ΔT(x,y,z,t):
-
-    Input  : [Q_norm (1,32,32,16),  t_broadcast (1,32,32,16)]  → (B, 2, 32, 32, 16)
-    Output : ΔT_norm (1,32,32,16)                               → (B, 1, 32, 32, 16)
-
-Normalisation (per-simulation):
-    Q_norm   = Q / Q.max()              (inputs in [0, 1])
-    ΔT_norm  = (T − T_ambient) / Q.max()
-    t_norm   = t / t_end                (in [0, 1])
-
-At inference:  T_pred = model_output × Q.max() + T_ambient
+Train an FNO surrogate for chip thermal prediction.
 
 Usage
 -----
-# Quick smoke-test  (10 sims, 5 epochs)
-python3.11 projects/chip_thermal/train.py --n_sim 10 --epochs 5
+# CPU
+python train.py
 
-# Full training on GPU
-python3.11 projects/chip_thermal/train.py --device cuda --n_sim 300 --epochs 80
+# AMD GPU (ROCm)
+python train.py --device cuda
+
+# Tune data size / epochs
+python train.py --device cuda --n_train 2000 --epochs 100
 """
 
 import argparse
-import sys
 import time
 from pathlib import Path
-
-# Allow running from repo root or from this directory
-sys.path.insert(0, str(Path(__file__).parent))
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import numpy as np
 import torch
@@ -42,228 +27,160 @@ from torch.utils.data import DataLoader, TensorDataset
 from solaris.models.fno import FNO
 from solaris.metrics import relative_l2_error
 from solaris.utils import get_logger, save_checkpoint
-from solaris.utils.training import EarlyStopping, GradientClipper
-from solver import random_power_map_3d, solve_heat_3d, T_AMBIENT_3D
+from solver import random_power_map, solve_heat
 
 
-# ── Dataset generation ────────────────────────────────────────────────────────
+# ─── Data generation ─────────────────────────────────────────────────────────
 
-def generate_dataset(
-    n_sim: int,
-    Nx: int = 32,
-    Ny: int = 32,
-    Nz: int = 16,
-    t_end: float = 0.01,
-    n_times: int = 8,
-    seed: int = 0,
-):
-    """Generate (Q_norm, t_broadcast, ΔT_norm) triples for 3-D transient heat.
+def generate_dataset(n: int, resolution: int, seed: int = 0) -> tuple:
+    """Generate (power_map, temperature) pairs using the FD solver.
 
-    For each simulation we produce ``n_times`` training samples — one per
-    snapshot time — giving ``n_sim × n_times`` total samples.
-
-    Returns
-    -------
-    Q_arr : ndarray (N, 1, Nx, Ny, Nz)  normalised power map (repeated per time)
-    t_arr : ndarray (N, 1, Nx, Ny, Nz)  normalised time broadcast to grid
-    T_arr : ndarray (N, 1, Nx, Ny, Nz)  normalised temperature rise
+    Returns arrays of shape (n, 1, H, W).
     """
     log = get_logger("generate")
     rng = np.random.default_rng(seed)
-    times = np.linspace(t_end / n_times, t_end, n_times)
+    Q_all, T_all = [], []
 
-    Q_list, t_list, T_list = [], [], []
-    T_rise_maxes = []
+    log.info(f"Generating {n} samples at {resolution}×{resolution} ...")
+    t0 = time.perf_counter()
+    for i in range(n):
+        Q = random_power_map(resolution, resolution, rng=rng)
+        T, _, _ = solve_heat(Q, max_iter=10_000, tol=1e-4)
+        Q_all.append(Q)
+        T_all.append(T)
+        if (i + 1) % max(1, n // 10) == 0:
+            pct = 100 * (i + 1) / n
+            log.info(f"  {i+1}/{n} ({pct:.0f}%) — {time.perf_counter()-t0:.1f}s elapsed")
 
-    log.info(f"Generating {n_sim} simulations × {n_times} snapshots "
-             f"on {Nx}×{Ny}×{Nz} grid …")
-    t_wall = time.perf_counter()
+    elapsed = time.perf_counter() - t0
+    log.info(f"Dataset done in {elapsed:.1f}s  ({elapsed/n*1000:.0f} ms/sample)")
 
-    for i in range(n_sim):
-        Q = random_power_map_3d(Nx, Ny, Nz, rng=rng)      # (Nx, Ny, Nz)
-        snaps, _times, _ = solve_heat_3d(Q, t_end=t_end, n_snapshots=n_times)
-        # snaps: (n_times, Nx, Ny, Nz)
-
-        peak_Q = float(Q.max()) + 1e-8
-        # Temperature-scale normalization: keep targets in [0, 1]
-        T_rise_all = snaps - T_AMBIENT_3D                  # (n_times, Nx, Ny, Nz)
-        T_rise_max = float(T_rise_all.max()) + 1e-8        # peak rise across all times
-
-        Q_norm = Q / peak_Q                                # [0, 1]
-        T_rise_maxes.append(T_rise_max)
-
-        for j in range(n_times):
-            T_norm = T_rise_all[j] / T_rise_max            # [0, 1]
-
-            t_norm = float(times[j] / t_end)
-            t_bc = np.full((1, Nx, Ny, Nz), t_norm, dtype=np.float32)
-
-            Q_list.append(Q_norm[None].astype(np.float32))   # (1,Nx,Ny,Nz)
-            t_list.append(t_bc)
-            T_list.append(T_norm[None].astype(np.float32))   # (1,Nx,Ny,Nz)
-
-        if (i + 1) % max(1, n_sim // 5) == 0:
-            elapsed = time.perf_counter() - t_wall
-            log.info(f"  {i+1}/{n_sim} sims done — {elapsed:.1f}s elapsed")
-
-    log.info(f"Dataset complete in {time.perf_counter()-t_wall:.1f}s")
-    T_scale_global = float(np.mean(T_rise_maxes))
-    log.info(f"Global T_rise_max mean: {T_scale_global:.4f} °C")
-    return np.stack(Q_list), np.stack(t_list), np.stack(T_list), T_scale_global
+    Q_arr = np.stack(Q_all)[:, None]  # (N, 1, H, W)
+    T_arr = np.stack(T_all)[:, None]
+    return Q_arr, T_arr
 
 
-# ── Training loop ─────────────────────────────────────────────────────────────
+def normalize(arr: np.ndarray):
+    mean, std = arr.mean(), arr.std() + 1e-8
+    return (arr - mean) / std, mean, std
+
+
+# ─── Training loop ────────────────────────────────────────────────────────────
 
 def train(args):
     log = get_logger("train")
-    device = torch.device(
-        args.device if (torch.cuda.is_available() or args.device == "cpu") else "cpu"
-    )
+    device = torch.device(args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu")
     log.info(f"Device: {device}")
     if device.type == "cuda":
         log.info(f"GPU: {torch.cuda.get_device_name(0)}")
 
-    # ── Data ────────────────────────────────────────────────────────────────
+    # ── Data ──
     cache = Path(args.cache)
     if cache.exists():
         log.info(f"Loading cached dataset from {cache}")
         d = np.load(cache)
-        Q_arr, t_arr, T_arr = d["Q"], d["t"], d["T"]
-        T_scale_global = float(d.get("T_scale_global", np.array(1.0)))
-        n_expected = args.n_sim * args.n_times
-        if len(Q_arr) < n_expected:
-            log.info(f"Cache has {len(Q_arr)} samples, need {n_expected} — regenerating")
-            Q_arr = None
+        Q_arr, T_arr = d["Q"], d["T"]
+        if len(Q_arr) < args.n_train + args.n_val:
+            log.info("Cache too small — regenerating")
+            Q_arr, T_arr = None, None
     else:
-        Q_arr = None
+        Q_arr, T_arr = None, None
 
     if Q_arr is None:
-        Q_arr, t_arr, T_arr, T_scale_global = generate_dataset(
-            args.n_sim, n_times=args.n_times, t_end=args.t_end, seed=42
-        )
+        Q_arr, T_arr = generate_dataset(args.n_train + args.n_val, args.resolution, seed=42)
         cache.parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(cache, Q=Q_arr, t=t_arr, T=T_arr,
-                            t_end=args.t_end, T_scale_global=T_scale_global)
+        np.savez_compressed(cache, Q=Q_arr, T=T_arr)
         log.info(f"Saved dataset → {cache}")
 
-    # ── Norm stats for inference ─────────────────────────────────────────────
-    # T_scale_global: mean per-sim T_rise_max → used to denormalise at inference
-    ckpt_dir = Path(args.checkpoint_dir)
-    ckpt_dir.mkdir(parents=True, exist_ok=True)
-    np.savez(
-        ckpt_dir / "norm_stats_3d.npz",
-        T_ambient=T_AMBIENT_3D,
-        t_end=args.t_end,
-        T_scale_global=T_scale_global,
-    )
-    log.info(f"Norm stats: T_ambient={T_AMBIENT_3D}°C, "
-             f"T_scale_global={T_scale_global:.4f}°C, t_end={args.t_end*1e3:.1f}ms")
+    # Normalise
+    Q_norm, Q_mean, Q_std = normalize(Q_arr)
+    T_norm, T_mean, T_std = normalize(T_arr)
 
-    # ── Concatenate [Q, t] into 2-channel input ──────────────────────────────
-    inp = np.concatenate([Q_arr, t_arr], axis=1)    # (N, 2, Nx, Ny, Nz)
+    # Save stats for inference
+    stats_path = Path(args.checkpoint_dir) / "norm_stats.npz"
+    Path(args.checkpoint_dir).mkdir(parents=True, exist_ok=True)
+    np.savez(stats_path, Q_mean=Q_mean, Q_std=Q_std, T_mean=T_mean, T_std=T_std)
 
-    n_total = len(inp)
-    n_val   = max(1, int(n_total * 0.15))
-    idx     = np.random.default_rng(0).permutation(n_total)
+    Q_t = torch.as_tensor(Q_norm, dtype=torch.float32)
+    T_t = torch.as_tensor(T_norm, dtype=torch.float32)
 
-    def to_t(a):
-        return torch.as_tensor(a, dtype=torch.float32)
+    train_ds = TensorDataset(Q_t[: args.n_train], T_t[: args.n_train])
+    val_ds   = TensorDataset(Q_t[args.n_train :], T_t[args.n_train :])
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
+                              pin_memory=(device.type == "cuda"))
+    val_loader   = DataLoader(val_ds,   batch_size=args.batch_size,
+                              pin_memory=(device.type == "cuda"))
 
-    train_ds = TensorDataset(to_t(inp[idx[n_val:]]), to_t(T_arr[idx[n_val:]]))
-    val_ds   = TensorDataset(to_t(inp[idx[:n_val]]), to_t(T_arr[idx[:n_val]]))
-
-    train_loader = DataLoader(
-        train_ds, args.batch_size, shuffle=True,
-        pin_memory=(device.type == "cuda"), num_workers=0,
-    )
-    val_loader = DataLoader(
-        val_ds, args.batch_size,
-        pin_memory=(device.type == "cuda"), num_workers=0,
-    )
-
-    # ── Model ────────────────────────────────────────────────────────────────
+    # ── Model ──
     model = FNO(
-        in_channels=2, out_channels=1,
+        in_channels=1, out_channels=1,
         hidden_channels=args.hidden,
         n_layers=args.n_layers,
         modes=args.modes,
-        dim=3,
+        dim=2,
     ).to(device)
-    log.info(f"FNO-3D parameters: {model.num_parameters():,}")
+    log.info(f"FNO parameters: {model.num_parameters():,}")
 
-    opt   = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
-    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, args.epochs)
-    loss_fn  = nn.MSELoss()
-    stopper  = EarlyStopping(patience=15, min_delta=1e-6, mode="min")
-    clipper  = GradientClipper(max_norm=1.0)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+    loss_fn = nn.MSELoss()
 
-    best = float("inf")
+    best_val = float("inf")
     log.info("Starting training …")
-
     for epoch in range(1, args.epochs + 1):
         model.train()
-        tr = 0.0
-        for x, y in train_loader:
-            x, y = x.to(device), y.to(device)
-            opt.zero_grad()
-            loss = loss_fn(model(x), y)
+        tr_loss = 0.0
+        for Q_b, T_b in train_loader:
+            Q_b, T_b = Q_b.to(device), T_b.to(device)
+            optimizer.zero_grad()
+            pred = model(Q_b)
+            loss = loss_fn(pred, T_b)
             loss.backward()
-            clipper(model)
-            opt.step()
-            tr += loss.item() * len(x)
-        tr /= len(train_ds)
-        sched.step()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
+            tr_loss += loss.item() * len(Q_b)
+        tr_loss /= len(train_ds)
+        scheduler.step()
 
         model.eval()
-        vl = vr = 0.0
+        val_loss, val_l2 = 0.0, 0.0
         with torch.no_grad():
-            for x, y in val_loader:
-                x, y = x.to(device), y.to(device)
-                p = model(x)
-                vl += loss_fn(p, y).item() * len(x)
-                vr += relative_l2_error(p, y).item() * len(x)
-        vl /= len(val_ds)
-        vr /= len(val_ds)
+            for Q_b, T_b in val_loader:
+                Q_b, T_b = Q_b.to(device), T_b.to(device)
+                pred = model(Q_b)
+                val_loss += loss_fn(pred, T_b).item() * len(Q_b)
+                val_l2   += relative_l2_error(pred, T_b).item() * len(Q_b)
+        val_loss /= len(val_ds)
+        val_l2   /= len(val_ds)
 
-        log.info(
-            f"Epoch {epoch:3d}/{args.epochs} | "
-            f"train={tr:.3e} | val={vl:.3e} | rel-L2={vr:.4f} | "
-            f"lr={sched.get_last_lr()[0]:.2e}"
-        )
+        log.info(f"Epoch {epoch:3d}/{args.epochs} | train={tr_loss:.3e} | val={val_loss:.3e} | rel-L2={val_l2:.4f} | lr={scheduler.get_last_lr()[0]:.2e}")
 
-        if vl < best:
-            best = vl
+        if val_loss < best_val:
+            best_val = val_loss
             save_checkpoint(
-                ckpt_dir / "best_fno_3d.pt",
-                model, opt, sched, epoch, vl,
-                extra={
-                    "hidden_channels": args.hidden,
-                    "n_layers": args.n_layers,
-                    "modes": args.modes,
-                },
+                Path(args.checkpoint_dir) / "best_fno.pt",
+                model, optimizer, scheduler, epoch, val_loss,
+                extra={"resolution": args.resolution},
             )
 
-        if stopper.step(vl):
-            log.info(f"Early stopping at epoch {epoch}")
-            break
-
-    log.info(f"Done.  Best val={best:.4e} → {ckpt_dir}/best_fno_3d.pt")
+    log.info(f"Training complete. Best val loss: {best_val:.4e}")
+    log.info(f"Checkpoint → {args.checkpoint_dir}/best_fno.pt")
 
 
-# ── CLI ───────────────────────────────────────────────────────────────────────
+# ─── CLI ─────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser(description="Train 3-D transient chip-thermal FNO")
+    p = argparse.ArgumentParser()
     p.add_argument("--device",         default="cpu")
-    p.add_argument("--n_sim",          type=int,   default=300,  help="Simulations to generate")
-    p.add_argument("--n_times",        type=int,   default=8,    help="Snapshots per simulation")
-    p.add_argument("--t_end",          type=float, default=0.01, help="Physical end time [s] (10 ms)")
-    p.add_argument("--epochs",         type=int,   default=80)
-    p.add_argument("--batch_size",     type=int,   default=16)
+    p.add_argument("--resolution",     type=int,   default=64)
+    p.add_argument("--n_train",        type=int,   default=800)
+    p.add_argument("--n_val",          type=int,   default=200)
+    p.add_argument("--epochs",         type=int,   default=50)
+    p.add_argument("--batch_size",     type=int,   default=32)
     p.add_argument("--lr",             type=float, default=1e-3)
-    p.add_argument("--hidden",         type=int,   default=32)
-    p.add_argument("--modes",          type=int,   default=8)
+    p.add_argument("--hidden",         type=int,   default=64)
+    p.add_argument("--modes",          type=int,   default=16)
     p.add_argument("--n_layers",       type=int,   default=4)
-    p.add_argument("--cache",          default="data/thermal_3d_dataset.npz")
+    p.add_argument("--cache",          default="data/thermal_dataset.npz")
     p.add_argument("--checkpoint_dir", default="checkpoints")
     train(p.parse_args())
