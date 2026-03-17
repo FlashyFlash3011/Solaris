@@ -30,13 +30,12 @@ import torch
 
 from solaris.models.fno import FNO
 from solaris.utils import get_logger
-from solaris.utils.checkpoint import load_checkpoint
 from solver import random_power_map_3d, solve_heat_3d, T_AMBIENT_3D
 
 
 def load_model(ckpt_path: str, device: torch.device) -> tuple:
     """Load the trained FNO-3D and its architecture hyper-parameters."""
-    ckpt = load_checkpoint(ckpt_path, map_location=device)
+    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
     hidden = ckpt.get("hidden_channels", 32)
     n_layers = ckpt.get("n_layers", 4)
     modes = ckpt.get("modes", 8)
@@ -62,8 +61,9 @@ def run_comparison(args):
     # ── Load norm stats ──────────────────────────────────────────────────────
     stats_path = Path(args.checkpoint).parent / "norm_stats_3d.npz"
     stats = np.load(stats_path)
-    T_ambient = float(stats["T_ambient"])
-    t_end     = float(stats["t_end"])
+    T_ambient      = float(stats["T_ambient"])
+    t_end          = float(stats["t_end"])
+    T_scale_global = float(stats.get("T_scale_global", np.array(1.0)))
     n_times   = args.n_times
 
     # ── Load model ───────────────────────────────────────────────────────────
@@ -114,8 +114,8 @@ def run_comparison(args):
         t_fno = time.perf_counter() - t0
         fno_times.append(t_fno)
 
-        # Denormalise: T = output × peak_Q + T_ambient
-        snaps_fno = out.cpu().numpy()[:, 0] * peak_Q + T_ambient  # (n_times,Nx,Ny,Nz)
+        # Denormalise: T = output × T_scale_global + T_ambient
+        snaps_fno = out.cpu().numpy()[:, 0] * T_scale_global + T_ambient  # (n_times,Nx,Ny,Nz)
 
         # ── Error (mean over time steps, relative L2 in interior) ────────────
         diff = snaps_fno[:, 1:-1, 1:-1, 1:-1] - snaps_ref[:, 1:-1, 1:-1, 1:-1]

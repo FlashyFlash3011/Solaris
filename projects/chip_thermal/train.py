@@ -73,6 +73,7 @@ def generate_dataset(
     times = np.linspace(t_end / n_times, t_end, n_times)
 
     Q_list, t_list, T_list = [], [], []
+    T_rise_maxes = []
 
     log.info(f"Generating {n_sim} simulations × {n_times} snapshots "
              f"on {Nx}×{Ny}×{Nz} grid …")
@@ -84,12 +85,15 @@ def generate_dataset(
         # snaps: (n_times, Nx, Ny, Nz)
 
         peak_Q = float(Q.max()) + 1e-8
+        # Temperature-scale normalization: keep targets in [0, 1]
+        T_rise_all = snaps - T_AMBIENT_3D                  # (n_times, Nx, Ny, Nz)
+        T_rise_max = float(T_rise_all.max()) + 1e-8        # peak rise across all times
 
         Q_norm = Q / peak_Q                                # [0, 1]
+        T_rise_maxes.append(T_rise_max)
 
         for j in range(n_times):
-            T_rise = snaps[j] - T_AMBIENT_3D              # °C rise
-            T_norm = T_rise / peak_Q                       # same scale as Q
+            T_norm = T_rise_all[j] / T_rise_max            # [0, 1]
 
             t_norm = float(times[j] / t_end)
             t_bc = np.full((1, Nx, Ny, Nz), t_norm, dtype=np.float32)
@@ -103,7 +107,9 @@ def generate_dataset(
             log.info(f"  {i+1}/{n_sim} sims done — {elapsed:.1f}s elapsed")
 
     log.info(f"Dataset complete in {time.perf_counter()-t_wall:.1f}s")
-    return np.stack(Q_list), np.stack(t_list), np.stack(T_list)
+    T_scale_global = float(np.mean(T_rise_maxes))
+    log.info(f"Global T_rise_max mean: {T_scale_global:.4f} °C")
+    return np.stack(Q_list), np.stack(t_list), np.stack(T_list), T_scale_global
 
 
 # ── Training loop ─────────────────────────────────────────────────────────────
@@ -123,6 +129,7 @@ def train(args):
         log.info(f"Loading cached dataset from {cache}")
         d = np.load(cache)
         Q_arr, t_arr, T_arr = d["Q"], d["t"], d["T"]
+        T_scale_global = float(d.get("T_scale_global", np.array(1.0)))
         n_expected = args.n_sim * args.n_times
         if len(Q_arr) < n_expected:
             log.info(f"Cache has {len(Q_arr)} samples, need {n_expected} — regenerating")
@@ -131,21 +138,26 @@ def train(args):
         Q_arr = None
 
     if Q_arr is None:
-        Q_arr, t_arr, T_arr = generate_dataset(
+        Q_arr, t_arr, T_arr, T_scale_global = generate_dataset(
             args.n_sim, n_times=args.n_times, t_end=args.t_end, seed=42
         )
         cache.parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(cache, Q=Q_arr, t=t_arr, T=T_arr, t_end=args.t_end)
+        np.savez_compressed(cache, Q=Q_arr, t=t_arr, T=T_arr,
+                            t_end=args.t_end, T_scale_global=T_scale_global)
         log.info(f"Saved dataset → {cache}")
 
-    # ── Norm stats (T_ambient and t_end are all that's needed for inference) ─
+    # ── Norm stats for inference ─────────────────────────────────────────────
+    # T_scale_global: mean per-sim T_rise_max → used to denormalise at inference
     ckpt_dir = Path(args.checkpoint_dir)
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     np.savez(
         ckpt_dir / "norm_stats_3d.npz",
         T_ambient=T_AMBIENT_3D,
         t_end=args.t_end,
+        T_scale_global=T_scale_global,
     )
+    log.info(f"Norm stats: T_ambient={T_AMBIENT_3D}°C, "
+             f"T_scale_global={T_scale_global:.4f}°C, t_end={args.t_end*1e3:.1f}ms")
 
     # ── Concatenate [Q, t] into 2-channel input ──────────────────────────────
     inp = np.concatenate([Q_arr, t_arr], axis=1)    # (N, 2, Nx, Ny, Nz)
