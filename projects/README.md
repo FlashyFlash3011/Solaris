@@ -7,6 +7,7 @@ End-to-end demo projects. Each has its own data generator, traditional solver, n
 | `chip_thermal/` | Steady-state 2D heat conduction — predict chip temperature from power map | FNO, ConstrainedFNO, NeuralResidualCorrector |
 | `water_heat_diffusion/` | Time-evolving 2D heat diffusion in a microfluidics channel | Time-conditioned FNO |
 | `weather_forecast/` | Multi-day atmospheric pressure and temperature forecasting | AFNO |
+| `hurricane_flood/` | 24-hour hurricane storm surge — mass-conserving flood depth + divergence-free wind with calibrated uncertainty | CoupledOperator (ConstrainedFNO × 2) + ConformalNeuralOperator |
 
 Each project folder contains:
 - `solver.py` — traditional finite-difference solver (ground truth)
