@@ -35,12 +35,11 @@ from matplotlib.animation import FuncAnimation, PillowWriter
 
 from solaris.models.fno import FNO
 from solaris.utils import get_logger
-from solaris.utils.checkpoint import load_checkpoint
 from solver import random_power_map_3d, solve_heat_3d, T_AMBIENT_3D
 
 
 def load_model(ckpt_path: str, device: torch.device) -> FNO:
-    ckpt = load_checkpoint(ckpt_path, map_location=device)
+    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
     hidden   = ckpt.get("hidden_channels", 32)
     n_layers = ckpt.get("n_layers", 4)
     modes    = ckpt.get("modes", 8)
@@ -55,7 +54,7 @@ def load_model(ckpt_path: str, device: torch.device) -> FNO:
 
 
 def run_fno(model, Q: np.ndarray, times: np.ndarray, t_end: float,
-            device: torch.device) -> np.ndarray:
+            T_scale_global: float, device: torch.device) -> np.ndarray:
     """Run the FNO for all snapshot times and return denormalised T."""
     Nx, Ny, Nz = Q.shape
     n_times = len(times)
@@ -74,7 +73,7 @@ def run_fno(model, Q: np.ndarray, times: np.ndarray, t_end: float,
     with torch.no_grad():
         out = model(inp).cpu().numpy()[:, 0]                           # (n_t,Nx,Ny,Nz)
 
-    return out * peak_Q + T_AMBIENT_3D   # denormalise → °C
+    return out * T_scale_global + T_AMBIENT_3D   # denormalise → °C
 
 
 def main(args):
@@ -86,8 +85,9 @@ def main(args):
 
     # ── Load model and norm stats ────────────────────────────────────────────
     stats = np.load(Path(args.checkpoint).parent / "norm_stats_3d.npz")
-    T_ambient = float(stats["T_ambient"])
-    t_end     = float(stats["t_end"])
+    T_ambient      = float(stats["T_ambient"])
+    t_end          = float(stats["t_end"])
+    T_scale_global = float(stats.get("T_scale_global", np.array(1.0)))
     n_times   = args.n_times
 
     model = load_model(args.checkpoint, device)
@@ -106,7 +106,7 @@ def main(args):
     # ── Run FNO ──────────────────────────────────────────────────────────────
     log.info("Running FNO-3D …")
     import time; t0 = time.perf_counter()
-    snaps_fno = run_fno(model, Q, times, t_end, device)
+    snaps_fno = run_fno(model, Q, times, t_end, T_scale_global, device)
     log.info(f"FNO done in {(time.perf_counter()-t0)*1000:.1f}ms")
 
     # ── Build animation ──────────────────────────────────────────────────────
