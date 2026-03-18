@@ -24,16 +24,18 @@ import torch
 from solaris.models.fno import FNO
 from solaris.utils import get_logger
 from solaris.utils.checkpoint import load_checkpoint
-from solver import random_power_map, solve_heat
+from solver import chip_floorplan_power_map, solve_heat
 
 
 def load_model(ckpt_path: str, device: torch.device) -> tuple:
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
-    resolution = ckpt.get("resolution", 64)
-
-    # Rebuild model with same architecture
-    model = FNO(in_channels=1, out_channels=1, hidden_channels=64,
-                n_layers=4, modes=16, dim=2).to(device)
+    resolution      = ckpt.get("resolution",       128)
+    hidden_channels = ckpt.get("hidden_channels",   64)
+    n_layers        = ckpt.get("n_layers",           4)
+    modes           = ckpt.get("modes",             16)
+    model = FNO(in_channels=1, out_channels=1,
+                hidden_channels=hidden_channels,
+                n_layers=n_layers, modes=modes, dim=2).to(device)
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
     return model, resolution
@@ -65,10 +67,10 @@ def run_comparison(args):
     log.info("-" * 55)
 
     for i in range(args.n):
-        Q = random_power_map(resolution, resolution, rng=rng)
+        Q = chip_floorplan_power_map(resolution, resolution, rng=rng)
 
         # ── Baseline: FD solver ──────────────────────────────────────────
-        T_ref, n_iters, t_solver = solve_heat(Q, max_iter=20_000, tol=1e-5)
+        T_ref, _, t_solver = solve_heat(Q)
         solver_times.append(t_solver)
 
         # ── FNO surrogate ────────────────────────────────────────────────
