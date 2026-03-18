@@ -57,6 +57,14 @@ def run_comparison(args):
     model, resolution = load_model(args.checkpoint, device)
     log.info(f"Loaded FNO | resolution={resolution} | params={model.num_parameters():,}")
 
+    # GPU warm-up: one throwaway forward pass so CUDA JIT doesn't inflate
+    # the first real timing measurement.
+    if device.type == "cuda":
+        dummy = torch.zeros(1, 1, resolution, resolution, device=device)
+        with torch.no_grad():
+            _ = model(dummy)
+        torch.cuda.synchronize()
+
     rng = np.random.default_rng(args.seed)
 
     solver_times, fno_times, rel_l2s = [], [], []
@@ -121,11 +129,13 @@ def run_comparison(args):
         fig, axes = plt.subplots(1, 4, figsize=(16, 4))
         fig.subplots_adjust(wspace=0.35)
 
+        avg_solver_ms = np.mean(solver_times) * 1000
+        avg_fno_ms    = np.mean(fno_times)    * 1000
         panels = [
-            (axes[0], Q,     "hot",    None,   None,   "Power map",                    "W/m²"),
-            (axes[1], T_ref, "inferno", vmin_T, vmax_T, f"FD Solver  ({solver_times[0]:.2f} s)", "°C"),
-            (axes[2], T_pred,"inferno", vmin_T, vmax_T, f"FNO Surrogate  ({fno_times[0]*1000:.1f} ms)", "°C"),
-            (axes[3], err,   "RdBu_r", None,   None,   f"|Error|  rel-L2 = {rl2:.4f}",  "°C"),
+            (axes[0], Q,     "hot",    None,   None,   "Power map",                                    "W/m²"),
+            (axes[1], T_ref, "inferno", vmin_T, vmax_T, f"FD Solver  (avg {avg_solver_ms:.0f} ms)",    "°C"),
+            (axes[2], T_pred,"inferno", vmin_T, vmax_T, f"FNO Surrogate  (avg {avg_fno_ms:.1f} ms)",   "°C"),
+            (axes[3], err,   "RdBu_r", None,   None,   f"|Error|  rel-L2 = {rl2:.4f}",                 "°C"),
         ]
         for ax, data, cmap, vmin, vmax, title, label in panels:
             kw = dict(cmap=cmap, origin="lower", interpolation="bilinear")
