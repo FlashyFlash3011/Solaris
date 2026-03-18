@@ -27,13 +27,13 @@ from torch.utils.data import DataLoader, TensorDataset
 from solaris.models.fno import FNO
 from solaris.metrics import relative_l2_error
 from solaris.utils import get_logger, save_checkpoint
-from solver import random_power_map, solve_heat
+from solver import chip_floorplan_power_map, solve_heat
 
 
 # ─── Data generation ─────────────────────────────────────────────────────────
 
 def generate_dataset(n: int, resolution: int, seed: int = 0) -> tuple:
-    """Generate (power_map, temperature) pairs using the FD solver.
+    """Generate (power_map, temperature) pairs using the sparse FD solver.
 
     Returns arrays of shape (n, 1, H, W).
     """
@@ -41,11 +41,11 @@ def generate_dataset(n: int, resolution: int, seed: int = 0) -> tuple:
     rng = np.random.default_rng(seed)
     Q_all, T_all = [], []
 
-    log.info(f"Generating {n} samples at {resolution}×{resolution} ...")
+    log.info(f"Generating {n} chip-floorplan samples at {resolution}×{resolution} ...")
     t0 = time.perf_counter()
     for i in range(n):
-        Q = random_power_map(resolution, resolution, rng=rng)
-        T, _, _ = solve_heat(Q, max_iter=10_000, tol=1e-4)
+        Q = chip_floorplan_power_map(resolution, resolution, rng=rng)
+        T, _, _ = solve_heat(Q)
         Q_all.append(Q)
         T_all.append(T)
         if (i + 1) % max(1, n // 10) == 0:
@@ -171,8 +171,8 @@ def train(args):
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
-    p.add_argument("--device",         default="cpu")
-    p.add_argument("--resolution",     type=int,   default=64)
+    p.add_argument("--device",         default="cuda")
+    p.add_argument("--resolution",     type=int,   default=128)
     p.add_argument("--n_train",        type=int,   default=800)
     p.add_argument("--n_val",          type=int,   default=200)
     p.add_argument("--epochs",         type=int,   default=50)
