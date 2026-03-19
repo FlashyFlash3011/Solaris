@@ -1,43 +1,33 @@
-# Chip Thermal — FNO Surrogate on Real-World PDE Data
+# Chip Thermal — FNO Surrogate for 2-D Steady-State Heat Conduction
 
-Predict the steady-state temperature / pressure field in a variable-conductivity
-medium given its permeability map — the Darcy flow / heat conduction equation:
+Predict the steady-state temperature field on a chip given its power-density map:
 
 ```
--∇·(a(x)∇u) = f    on [0,1]²
- u = 0              on boundary
+-∇²T = Q(x,y)    on [0,1]²
+T = T_ambient     on boundary  (isothermal package)
 ```
 
-Mathematically identical to steady-state heat conduction with spatially-varying
-thermal conductivity `k(x) = a(x)`:  `-∇·(k(x)∇T) = Q`
+The FNO learns this mapping from (Q → T) in ~1% rel-L2 error, then evaluates
+**1 000 new chip layouts** in milliseconds instead of ~50 seconds.
 
 ---
 
 ## Dataset
 
-**Pre-made, professionally generated data** (Zenodo record 12784353,
-~356 MB download, cached after first run).
+Generated on-the-fly by the scipy sparse FD solver in `solver.py`.
 
 | Property | Value |
 |---|---|
-| Source | FEM solver (FEniCS), high-fidelity |
+| Source | scipy sparse FD (vectorised Laplacian, direct LU) |
 | Resolution | 128 × 128 |
-| Samples available | 10,000+ |
-| Training samples used | 1,000 |
-| Test samples | 200 |
-| Time to generate (FEM) | Hours on a workstation |
+| Samples | 1 000 train + 200 test |
+| Temperature range | 40–93 °C (calibrated to real junction temps) |
+| Time per sample | ~50 ms on CPU |
+| Total generation time | ~1 min |
 
-The FNO is trained on 1,000 of these samples.  At inference time,
-the FD solver must re-assemble and solve a 16,000 × 16,000 sparse system
-for each new design — taking **~50 ms per design**.  The FNO predicts in
-**< 3 milliseconds** — a **~20× per-query speedup**.
-
-For an engineer exploring 100,000 design variants:
-
-| Method | Time for 100 k queries |
-|---|---|
-| Traditional FD solver (128×128) | ~83 minutes |
-| FNO surrogate | ~5 minutes |
+Chip floorplan: 4 compute cores (with L2 cache shells), L3 cache band, 2 memory
+controllers, and an I/O ring — each with randomised utilisation so the model sees
+diverse thermal profiles.
 
 ---
 
@@ -46,11 +36,11 @@ For an engineer exploring 100,000 design variants:
 ```bash
 cd projects/chip_thermal
 
-# Step 1 — train (downloads ~356 MB Darcy dataset on first run, ~5 min on GPU)
+# Step 1 — generate dataset + train (~1 min to generate, ~5 min on GPU)
 python train.py --device cuda
 
-# Step 2 — head-to-head comparison
-python compare.py --device cuda --n 20
+# Step 2 — batch throughput comparison (1 000 new layouts)
+python compare.py --device cuda
 # → prints timing table + saves results/compare.png
 ```
 
@@ -58,14 +48,14 @@ python compare.py --device cuda --n 20
 
 ```bash
 python train.py --device cpu --n_train 200 --epochs 20
-python compare.py --device cpu --n 5
+python compare.py --device cpu --n_batch 50
 ```
 
 ### Smoke-test the solver alone
 
 ```bash
 python solver.py
-# → prints FD solver vs FEM ground truth rel-L2, saves solver_demo.png
+# → prints Q/T ranges, solve time, saves solver_demo.png
 ```
 
 ---
@@ -73,24 +63,22 @@ python solver.py
 ## Expected output
 
 ```
-   #    FD Solver (s)    FNO (ms)    Speedup    Rel-L2
----------------------------------------------------------
-   1            0.052        2.81       19×      0.0071
-   2            0.049        2.78       18×      0.0083
-   3            0.051        2.80       18×      0.0065
-  ...
-=========================================================
-  FD Solver  avg: 0.051s
-  FNO        avg: 2.80ms
-  Speedup    avg: 18×
-  Rel-L2     avg: 0.0076  (max 0.0124)
+============================================================
+  Batch size        : 1000 chip layouts
+  FD Solver  total  : 49.3s  (49.3 ms/layout)
+  FNO        total  : 521ms  (0.52 ms/layout)
+  Speedup           : 95×
+  Rel-L2 avg        : 0.0088  (max 0.0151)
+============================================================
 ```
 
-`results/compare.png` shows four columns:
-1. Conductivity map `a(x)` — where the material varies
-2. FEM ground truth `u(x)` — the reference solution
-3. FNO prediction — what the surrogate produces in <3ms
-4. Absolute error `|u_FNO − u_FEM|`
+`results/compare.png` shows four panels for one representative layout:
+1. **Power Map Q(x,y)** — chip architecture with labelled components
+2. **FD Solver T [°C]** — reference temperature (ms/layout timing)
+3. **FNO Surrogate T [°C]** — prediction (ms/layout timing)
+4. **|Error| [°C]** — absolute error + rel-L2 percentage
+
+Supertitle shows total batch speedup: `1000 layouts · FD: 49s · FNO: 521ms · 95× faster`
 
 ---
 
@@ -98,10 +86,11 @@ python solver.py
 
 | Flag | Default | Notes |
 |---|---|---|
-| `--n_train` | 1000 | Training samples (up to 10 k in dataset) |
-| `--subsample` | 1 | Spatial stride (1 = full 128×128) |
-| `--epochs` | 100 | More epochs → lower rel-L2 |
+| `--n_train` | 1000 | Training samples |
+| `--epochs` | 200 | More epochs → lower rel-L2 |
 | `--hidden` | 64 | FNO hidden channel width |
-| `--modes` | 12 | Fourier modes kept per dimension |
+| `--modes` | 16 | Fourier modes kept per dimension |
 | `--n_layers` | 4 | FNO depth |
-| `--resolution` | 128 | Dataset resolution (128 or 421) |
+| `--resolution` | 128 | Grid resolution |
+| `--n_batch` | 1000 | Compare: layouts in batch test |
+| `--batch_size` | 64 | Compare: GPU inference batch size |
