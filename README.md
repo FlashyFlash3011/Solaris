@@ -27,7 +27,7 @@ Built for AMD GPUs (RDNA2 through RDNA4, CDNA1 through CDNA3). Drop-in compatibl
 
 **Chip thermal simulation** — power map → temperature field
 
-![Chip Thermal Benchmark](assets/benchmark_results.png)
+![Chip Thermal Benchmark](assets/compare.png)
 
 > Each column shows the error vs the ground-truth FD solver. Neural methods run in ~2ms vs ~44ms for the solver, at ~1% error.
 
