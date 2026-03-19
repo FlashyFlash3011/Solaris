@@ -1,21 +1,20 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024, Contributors
 # SPDX-License-Identifier: Apache-2.0
 """
-compare.py — head-to-head: scipy FD solver vs trained FNO surrogate.
+compare.py — Batch throughput: scipy FD solver vs trained FNO surrogate.
 
-The traditional solver must assemble and solve a ~175 k × 175 k sparse linear
-system at 421×421 resolution.  The FNO returns a prediction in a single
-forward pass at the subsampled resolution (~70×70).
+Generates N_batch brand-new chip layouts (never seen during training), times:
+  1. scipy sparse FD solver — solved sequentially on CPU
+  2. FNO surrogate          — batched GPU (or CPU) inference
 
-For N unseen Darcy instances this script:
-  1. Runs the scipy FD solver at full 421×421 resolution     (baseline)
-  2. Runs the FNO surrogate on GPU/CPU at subsampled resolution (fast)
-  3. Prints a timing table and error statistics
-  4. Saves a side-by-side figure (results/compare.png)
+Prints a summary table and saves results/compare.png — a 4-panel figure
+showing power map with chip architecture labels, FD temperature (°C),
+FNO temperature (°C), and absolute error.
 
 Usage
 -----
-python compare.py --checkpoint checkpoints/best_fno.pt --device cuda --n 20
+python compare.py --checkpoint checkpoints/best_fno.pt --device cuda
+python compare.py --checkpoint checkpoints/best_fno.pt --device cuda --n_batch 100
 """
 
 import argparse
@@ -31,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from solaris.models.fno import FNO
 from solaris.utils import get_logger
-from solver import load_darcy_data, solve_darcy_fd
+from solver import chip_floorplan_power_map, solve_heat_fd, LAYOUT_LABELS
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -40,8 +39,7 @@ def load_model(ckpt_path: str, device: torch.device):
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
     hidden_channels = ckpt.get("hidden_channels", 64)
     n_layers        = ckpt.get("n_layers",         4)
-    modes           = ckpt.get("modes",            12)
-    subsample       = ckpt.get("subsample",         1)
+    modes           = ckpt.get("modes",            16)
     resolution      = ckpt.get("resolution",       128)
     model = FNO(
         in_channels=1, out_channels=1,
@@ -52,7 +50,7 @@ def load_model(ckpt_path: str, device: torch.device):
     ).to(device)
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
-    return model, subsample, resolution
+    return model, resolution
 
 
 # ─── Main ────────────────────────────────────────────────────────────────────
@@ -67,129 +65,170 @@ def run_comparison(args):
         log.info(f"GPU: {torch.cuda.get_device_name(0)}")
 
     # ── Load norm stats ──
-    stats = np.load(Path(args.checkpoint).parent / "norm_stats.npz")
-    a_mean, a_std = float(stats["a_mean"]), float(stats["a_std"])
-    u_mean, u_std = float(stats["u_mean"]), float(stats["u_std"])
+    stats  = np.load(Path(args.checkpoint).parent / "norm_stats.npz")
+    Q_mean = float(stats["Q_mean"]);  Q_std = float(stats["Q_std"])
+    T_mean = float(stats["T_mean"]);  T_std = float(stats["T_std"])
 
     # ── Load trained FNO ──
-    model, subsample, resolution = load_model(args.checkpoint, device)
-    log.info(f"Loaded FNO  |  resolution={resolution}  |  subsample={subsample}  |  params={model.num_parameters():,}")
+    model, resolution = load_model(args.checkpoint, device)
+    H = W = resolution
+    log.info(f"Loaded FNO  |  resolution={resolution}  |  params={model.num_parameters():,}")
 
     # ── GPU warm-up ──
     if device.type == "cuda":
-        dummy_H = (resolution + subsample - 1) // subsample
-        dummy = torch.zeros(1, 1, dummy_H, dummy_H, device=device)
+        dummy = torch.zeros(1, 1, H, W, device=device)
         with torch.no_grad():
             _ = model(dummy)
         torch.cuda.synchronize()
 
-    # ── Load test data ──
-    log.info(f"Loading test instances from Darcy {resolution}×{resolution} dataset …")
-    _, _, a_test_full, u_test_full = load_darcy_data(
-        n_train=5, n_test=args.n + 10, resolution=resolution, subsample=1
-    )  # full-resolution for FD solver
+    # ── Generate N_batch new chip layouts ──
+    N = args.n_batch
+    log.info(f"Generating {N} new chip layouts …")
+    rng = np.random.default_rng(args.seed)
+    Q_all = np.stack([chip_floorplan_power_map(H, W, rng) for _ in range(N)])  # (N, H, W)
 
-    # Sub-sample in-memory for FNO input (avoids a second dataset load)
-    a_test_sub = a_test_full[:, :, ::subsample, ::subsample]
-    u_test_sub = u_test_full[:, :, ::subsample, ::subsample]
+    # ── Baseline: scipy FD solver — sequential ──
+    log.info(f"Running scipy FD solver on {N} layouts (sequential) …")
+    t0 = time.perf_counter()
+    T_fd_all = np.empty_like(Q_all)
+    for i in range(N):
+        T_fd_all[i], _ = solve_heat_fd(Q_all[i])
+    solver_total = time.perf_counter() - t0
+    solver_per_ms = solver_total / N * 1000
 
-    solver_times, fno_times, rel_l2s = [], [], []
-    samples_to_plot = []
+    # ── FNO surrogate — batched GPU inference ──
+    log.info(f"Running FNO surrogate on {N} layouts (batched, batch_size={args.batch_size}) …")
+    Q_norm = (Q_all - Q_mean) / Q_std                                 # (N, H, W)
+    Q_t    = torch.as_tensor(Q_norm[:, None], dtype=torch.float32)    # (N, 1, H, W)
 
-    H_sub = a_test_sub.shape[-1]
-    log.info(f"\nFD solver resolution: {resolution}×{resolution} | FNO resolution: {H_sub}×{H_sub}")
-    log.info(f"Running {args.n} comparisons …\n")
-    log.info(f"{'#':>4}  {'FD Solver (s)':>14}  {'FNO (ms)':>10}  {'Speedup':>9}  {'Rel-L2':>8}")
-    log.info("-" * 57)
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    t0 = time.perf_counter()
+    T_fno_norm_chunks = []
+    with torch.no_grad():
+        for start in range(0, N, args.batch_size):
+            chunk = Q_t[start:start + args.batch_size].to(device)
+            T_fno_norm_chunks.append(model(chunk).cpu())
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    fno_total = time.perf_counter() - t0
+    fno_per_ms = fno_total / N * 1000
 
-    for i in range(args.n):
-        a_full = a_test_full[i, 0]   # (421, 421)
-        a_sub  = a_test_sub[i, 0]    # (H_sub, H_sub)
-        u_ref  = u_test_sub[i, 0]    # ground truth at sub resolution
+    T_fno_norm = torch.cat(T_fno_norm_chunks, dim=0).numpy()[:, 0]   # (N, H, W)
+    T_fno_all  = T_fno_norm * T_std + T_mean                          # denormalise → °C
 
-        # ── Baseline: scipy FD solver (full 421×421) ──
-        _, t_solver = solve_darcy_fd(a_full)
-        solver_times.append(t_solver)
+    # ── Error statistics ──
+    diff   = T_fno_all - T_fd_all
+    rel_l2 = (
+        np.linalg.norm(diff.reshape(N, -1), axis=1)
+        / (np.linalg.norm(T_fd_all.reshape(N, -1), axis=1) + 1e-8)
+    )
+    speedup = solver_total / fno_total
 
-        # ── FNO surrogate ──
-        a_norm = (a_sub - a_mean) / a_std
-        a_t    = torch.as_tensor(a_norm[None, None], dtype=torch.float32).to(device)
-
-        if device.type == "cuda":
-            torch.cuda.synchronize()
-        t0 = time.perf_counter()
-        with torch.no_grad():
-            u_pred_norm = model(a_t)
-        if device.type == "cuda":
-            torch.cuda.synchronize()
-        t_fno = time.perf_counter() - t0
-        fno_times.append(t_fno)
-
-        u_pred = u_pred_norm.cpu().numpy()[0, 0] * u_std + u_mean
-
-        # Error
-        diff   = u_pred - u_ref
-        rel_l2 = np.linalg.norm(diff) / (np.linalg.norm(u_ref) + 1e-8)
-        rel_l2s.append(rel_l2)
-
-        speedup = t_solver / t_fno
-        log.info(
-            f"{i+1:>4}  {t_solver:>14.3f}  {t_fno*1000:>10.2f}"
-            f"  {speedup:>8.0f}×  {rel_l2:>8.4f}"
-        )
-
-        if i < args.n_plot:
-            samples_to_plot.append((a_sub, u_ref, u_pred, rel_l2))
-
-    # ── Summary ──
-    log.info("\n" + "=" * 57)
-    log.info(f"  FD Solver  avg: {np.mean(solver_times):.3f}s  (min {np.min(solver_times):.3f}s)")
-    log.info(f"  FNO        avg: {np.mean(fno_times)*1000:.2f}ms  (min {np.min(fno_times)*1000:.2f}ms)")
-    log.info(f"  Speedup    avg: {np.mean(solver_times)/np.mean(fno_times):.0f}×")
-    log.info(f"  Rel-L2     avg: {np.mean(rel_l2s):.4f}  (max {np.max(rel_l2s):.4f})")
+    # ── Summary table ──
+    log.info("")
+    log.info("=" * 60)
+    log.info(f"  Batch size        : {N} chip layouts")
+    log.info(f"  FD Solver  total  : {solver_total:.1f}s  ({solver_per_ms:.1f} ms/layout)")
+    log.info(f"  FNO        total  : {fno_total*1000:.0f}ms  ({fno_per_ms:.2f} ms/layout)")
+    log.info(f"  Speedup           : {speedup:.0f}×")
+    log.info(f"  Rel-L2 avg        : {np.mean(rel_l2):.4f}  (max {np.max(rel_l2):.4f})")
+    log.info("=" * 60)
 
     # ── Plot ──
     try:
         import matplotlib.pyplot as plt
+        import matplotlib.patheffects as pe
 
-        a0, u_ref0, u_pred0, rl2 = samples_to_plot[0]
-        err0 = np.abs(u_pred0 - u_ref0)
-        vmin_u = min(u_ref0.min(), u_pred0.min())
-        vmax_u = max(u_ref0.max(), u_pred0.max())
+        # Use the first sample for the figure
+        idx  = 0
+        Q0   = Q_all[idx]       # (H, W)
+        T_fd = T_fd_all[idx]
+        T_fn = T_fno_all[idx]
+        err  = np.abs(T_fn - T_fd)
+        rl2  = float(rel_l2[idx])
 
-        avg_solver_s  = np.mean(solver_times)
-        avg_fno_ms    = np.mean(fno_times) * 1000
-        avg_speedup   = avg_solver_s / (avg_fno_ms / 1000)
-        avg_rel_l2    = np.mean(rel_l2s)
+        T_ambient = float(T_fd.min())
+        vmin_T    = T_ambient
+        vmax_T    = float(T_fd.max())
 
-        fig, axes = plt.subplots(1, 4, figsize=(16, 4))
-        fig.subplots_adjust(wspace=0.35)
+        fig, axes = plt.subplots(1, 4, figsize=(18, 4.5))
+        fig.patch.set_facecolor("#0d0d0d")
+        fig.subplots_adjust(wspace=0.38, left=0.04, right=0.97, top=0.82, bottom=0.06)
 
-        panels = [
-            (axes[0], a0,     "hot",     None,   None,   "Conductivity  a(x)",                         ""),
-            (axes[1], u_ref0, "viridis", vmin_u, vmax_u, f"FEM ground truth  (FD ≈ {avg_solver_s:.2f}s)", ""),
-            (axes[2], u_pred0,"viridis", vmin_u, vmax_u, f"FNO prediction  ({avg_fno_ms:.1f} ms)",       ""),
-            (axes[3], err0,   "RdBu_r",  None,   None,   f"|Error|  rel-L2 = {rl2:.4f}",                ""),
-        ]
-        for ax, data, cmap, vmin, vmax, title, label in panels:
-            kw = dict(cmap=cmap, origin="lower", interpolation="bilinear")
-            if vmin is not None:
-                kw["vmin"], kw["vmax"] = vmin, vmax
-            im = ax.imshow(data, **kw)
-            ax.set_title(title, fontsize=9, pad=6)
+        # Panel 0 — Power map with chip architecture labels
+        im0 = axes[0].imshow(Q0, cmap="hot", origin="lower", interpolation="bilinear")
+        axes[0].set_title("Power Map  Q(x,y)\n[W/m²]", fontsize=9, color="white", pad=6)
+        cb0 = plt.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04)
+        cb0.ax.yaxis.set_tick_params(color="white", labelcolor="white")
+        cb0.outline.set_edgecolor("white")
+
+        # Architecture labels
+        for fx, fy, label in LAYOUT_LABELS:
+            px = fx * (W - 1)
+            py = fy * (H - 1)
+            txt = axes[0].text(
+                px, py, label,
+                color="white", fontsize=6.5, ha="center", va="center",
+                fontweight="bold",
+            )
+            txt.set_path_effects([
+                pe.Stroke(linewidth=2, foreground="black"),
+                pe.Normal(),
+            ])
+
+        # Panel 1 — FD solver temperature
+        im1 = axes[1].imshow(T_fd, cmap="inferno", origin="lower",
+                             vmin=vmin_T, vmax=vmax_T, interpolation="bilinear")
+        axes[1].set_title(
+            f"FD Solver  T [°C]\n{solver_per_ms:.1f} ms/layout",
+            fontsize=9, color="white", pad=6,
+        )
+        cb1 = plt.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
+        cb1.ax.yaxis.set_tick_params(color="white", labelcolor="white")
+        cb1.outline.set_edgecolor("white")
+
+        # Panel 2 — FNO prediction temperature
+        im2 = axes[2].imshow(T_fn, cmap="inferno", origin="lower",
+                             vmin=vmin_T, vmax=vmax_T, interpolation="bilinear")
+        axes[2].set_title(
+            f"FNO Surrogate  T [°C]\n{fno_per_ms:.2f} ms/layout",
+            fontsize=9, color="white", pad=6,
+        )
+        cb2 = plt.colorbar(im2, ax=axes[2], fraction=0.046, pad=0.04)
+        cb2.ax.yaxis.set_tick_params(color="white", labelcolor="white")
+        cb2.outline.set_edgecolor("white")
+
+        # Panel 3 — Absolute error
+        im3 = axes[3].imshow(err, cmap="RdBu_r", origin="lower", interpolation="bilinear")
+        axes[3].set_title(
+            f"|Error|  [°C]\nMax: {err.max():.1f}°C · Rel-L2: {rl2*100:.2f}%",
+            fontsize=9, color="white", pad=6,
+        )
+        cb3 = plt.colorbar(im3, ax=axes[3], fraction=0.046, pad=0.04)
+        cb3.ax.yaxis.set_tick_params(color="white", labelcolor="white")
+        cb3.outline.set_edgecolor("white")
+
+        for ax in axes:
             ax.set_xticks([]); ax.set_yticks([])
-            plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+            for spine in ax.spines.values():
+                spine.set_edgecolor("#444444")
+            ax.set_facecolor("#0d0d0d")
 
         fig.suptitle(
-            f"Darcy Flow  ·  FD Solver ({resolution}×{resolution}) vs FNO Surrogate  ·  "
-            f"{avg_speedup:.0f}× speedup  ·  avg rel-L2 = {avg_rel_l2:.4f}",
-            fontsize=11, fontweight="bold", y=1.02,
+            f"Batch of {N} new chip layouts  ·  "
+            f"FD Solver: {solver_total:.1f}s  ·  "
+            f"FNO (GPU): {fno_total*1000:.0f}ms  ·  "
+            f"{speedup:.0f}× faster",
+            fontsize=12, fontweight="bold", color="white", y=0.97,
         )
+
         out = Path(args.output)
         out.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(out, dpi=130, bbox_inches="tight")
-        log.info(f"\nFigure saved → {out}")
+        fig.savefig(out, dpi=140, bbox_inches="tight", facecolor=fig.get_facecolor())
+        log.info(f"Figure saved → {out}")
         plt.close(fig)
+
     except ImportError:
         log.warning("matplotlib not installed — skipping plot")
 
@@ -198,9 +237,10 @@ def run_comparison(args):
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
-    p.add_argument("--checkpoint", default="checkpoints/best_fno.pt")
-    p.add_argument("--device",     default="cuda")
-    p.add_argument("--n",          type=int, default=20, help="Number of test cases")
-    p.add_argument("--n_plot",     type=int, default=1,  help="Samples to include in figure")
-    p.add_argument("--output",     default="results/compare.png")
+    p.add_argument("--checkpoint",  default="checkpoints/best_fno.pt")
+    p.add_argument("--device",      default="cuda")
+    p.add_argument("--n_batch",     type=int, default=1000, help="Number of new layouts to compare")
+    p.add_argument("--batch_size",  type=int, default=64,   help="GPU batch size for FNO inference")
+    p.add_argument("--seed",        type=int, default=9999, help="RNG seed (different from training data)")
+    p.add_argument("--output",      default="results/compare.png")
     run_comparison(p.parse_args())
