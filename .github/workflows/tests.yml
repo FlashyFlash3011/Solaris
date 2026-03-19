@@ -1,3 +1,4 @@
+# Runs pytest on Python 3.10 and 3.11 on every push/PR to master
 name: Tests
 
 on:
