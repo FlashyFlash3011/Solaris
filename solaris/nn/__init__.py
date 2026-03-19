@@ -3,6 +3,9 @@ from solaris.nn.embeddings import FourierEmbedding, PositionalEmbedding, Sinusoi
 from solaris.nn.spectral import SpectralConv1d, SpectralConv2d, SpectralConv3d
 from solaris.nn.constraints import (
     DivergenceFreeProjection2d,
+    CurlFreeProjection2d,
+    NeumannBCLayer,
+    DirichletBCLayer,
     ConservationProjection,
     SpectralBandFilter,
 )
@@ -19,6 +22,9 @@ __all__ = [
     "SpectralConv2d",
     "SpectralConv3d",
     "DivergenceFreeProjection2d",
+    "CurlFreeProjection2d",
+    "NeumannBCLayer",
+    "DirichletBCLayer",
     "ConservationProjection",
     "SpectralBandFilter",
 ]

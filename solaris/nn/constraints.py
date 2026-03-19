@@ -160,3 +160,118 @@ class SpectralBandFilter(nn.Module):
             out_ft = out_ft + x_ft * mask.unsqueeze(0).unsqueeze(0) * w
 
         return torch.fft.irfft2(out_ft, s=(H, W), norm="ortho")
+
+
+class CurlFreeProjection2d(nn.Module):
+    """Project a 2-D vector field to be exactly curl-free (irrotational).
+
+    The curl-free component is the complement of the divergence-free component
+    in the Helmholtz decomposition: u = u_⊥ + u_∥, so
+
+        u_∥(k) = [k · û(k) / |k|²] k
+
+    Together, DivergenceFreeProjection2d + CurlFreeProjection2d = identity.
+
+    Parameters
+    ----------
+    eps : float
+        Numerical floor for |k|² to avoid division by zero at the DC component.
+    """
+
+    def __init__(self, eps: float = 1e-8) -> None:
+        super().__init__()
+        self.eps = eps
+
+    def forward(self, u: torch.Tensor) -> torch.Tensor:
+        assert u.shape[1] == 2, "CurlFreeProjection2d expects shape (B,2,H,W)"
+        B, _, H, W = u.shape
+
+        ux_ft = torch.fft.rfft2(u[:, 0], norm="ortho")
+        uy_ft = torch.fft.rfft2(u[:, 1], norm="ortho")
+
+        kx = torch.fft.fftfreq(H, device=u.device).reshape(H, 1)
+        ky = torch.fft.rfftfreq(W, device=u.device).reshape(1, W // 2 + 1)
+        k2 = kx ** 2 + ky ** 2
+
+        k2_safe = k2.clamp(min=self.eps)
+        k_dot_u = kx * ux_ft + ky * uy_ft
+        proj = k_dot_u / k2_safe
+        proj[:, 0, 0] = 0.0
+
+        ux_cf = torch.fft.irfft2(proj * kx, s=(H, W), norm="ortho")
+        uy_cf = torch.fft.irfft2(proj * ky, s=(H, W), norm="ortho")
+
+        return torch.stack([ux_cf, uy_cf], dim=1)
+
+
+class NeumannBCLayer(nn.Module):
+    """Enforce zero-flux (Neumann) boundary conditions on selected spatial dims.
+
+    Sets boundary slices equal to their immediate interior neighbours,
+    which imposes ∂u/∂n = 0 on those edges with zero learnable parameters.
+
+    Parameters
+    ----------
+    dims : tuple[int]
+        Spatial dimension indices (relative to the full tensor) on which to
+        enforce the BC.  Typically ``(2, 3)`` for (B, C, H, W) tensors.
+    """
+
+    def __init__(self, dims: tuple = (2, 3)) -> None:
+        super().__init__()
+        self.dims = dims
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = x.clone()
+        for d in self.dims:
+            idx_first = [slice(None)] * x.ndim
+            idx_second = [slice(None)] * x.ndim
+            idx_last = [slice(None)] * x.ndim
+            idx_second_last = [slice(None)] * x.ndim
+
+            idx_first[d] = 0
+            idx_second[d] = 1
+            idx_last[d] = -1
+            idx_second_last[d] = -2
+
+            x[idx_first] = x[idx_second]
+            x[idx_last] = x[idx_second_last]
+        return x
+
+
+class DirichletBCLayer(nn.Module):
+    """Enforce Dirichlet boundary conditions by overwriting border pixels.
+
+    The interior of the field is left unchanged; only the outermost pixels
+    on the H and W dimensions are set to ``boundary_values``.
+
+    Parameters
+    ----------
+    spatial_shape : tuple[int, int]
+        (H, W) of the field.
+    channels : int
+        Number of channels C.
+    boundary_values : torch.Tensor, optional
+        Shape (1, C, H, W). Defaults to all-zeros.
+    """
+
+    def __init__(
+        self,
+        spatial_shape: tuple,
+        channels: int,
+        boundary_values: torch.Tensor = None,
+    ) -> None:
+        super().__init__()
+        H, W = spatial_shape
+        if boundary_values is None:
+            boundary_values = torch.zeros(1, channels, H, W)
+        self.register_buffer("boundary_values", boundary_values)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = x.clone()
+        bv = self.boundary_values
+        x[:, :, 0, :]  = bv[:, :, 0, :]
+        x[:, :, -1, :] = bv[:, :, -1, :]
+        x[:, :, :, 0]  = bv[:, :, :, 0]
+        x[:, :, :, -1] = bv[:, :, :, -1]
+        return x

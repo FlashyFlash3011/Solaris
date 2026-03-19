@@ -99,6 +99,55 @@ class TensorDataset(Dataset):
         return sample
 
 
+class HDF5Dataset(Dataset):
+    """Dataset backed by an HDF5 file containing input/target arrays.
+
+    Parameters
+    ----------
+    path : str or Path
+        Path to the ``.h5`` file.
+    input_key : str
+        Dataset key for the input array (shape ``(N, C, ...)``) .
+    target_key : str
+        Dataset key for the target array.
+    transforms : list of callables, optional
+        Applied per-sample as ``transform({"input": ..., "target": ...})``.
+    """
+
+    def __init__(
+        self,
+        path: Union[str, Path],
+        input_key: str = "input",
+        target_key: str = "target",
+        transforms: Optional[List[Callable]] = None,
+    ) -> None:
+        super().__init__()
+        try:
+            import h5py
+        except ImportError as e:
+            raise ImportError("h5py is required for HDF5Dataset: pip install h5py") from e
+        self.path = str(path)
+        self.input_key = input_key
+        self.target_key = target_key
+        self.transforms = transforms or []
+        with h5py.File(self.path, "r") as f:
+            self._len = f[input_key].shape[0]
+
+    def __len__(self) -> int:
+        return self._len
+
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        import h5py
+        with h5py.File(self.path, "r") as f:
+            sample = {
+                "input":  torch.as_tensor(f[self.input_key][idx],  dtype=torch.float32),
+                "target": torch.as_tensor(f[self.target_key][idx], dtype=torch.float32),
+            }
+        for t in self.transforms:
+            sample = t(sample)
+        return sample
+
+
 def build_dataloader(
     dataset: Dataset,
     batch_size: int = 32,

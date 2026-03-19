@@ -82,6 +82,49 @@ class ToDevice:
         return {k: v.to(self.device) if isinstance(v, torch.Tensor) else v for k, v in sample.items()}
 
 
+class SymmetryAugmentation:
+    """Apply consistent random rotations and flips to all keys in a sample.
+
+    The same transform is applied to every key so that input/target pairs
+    remain aligned.  Supports 90° rotations and horizontal/vertical flips.
+
+    Parameters
+    ----------
+    keys : list[str]
+        Keys in the sample dict to transform.
+    p_rot : float
+        Probability of applying a random 90° rotation (0, 90, 180, or 270°).
+    p_flip_h : float
+        Probability of a horizontal flip (left-right).
+    p_flip_v : float
+        Probability of a vertical flip (up-down).
+    """
+
+    def __init__(self, keys: list, p_rot: float = 0.5, p_flip_h: float = 0.5, p_flip_v: float = 0.5) -> None:
+        self.keys = keys
+        self.p_rot = p_rot
+        self.p_flip_h = p_flip_h
+        self.p_flip_v = p_flip_v
+
+    def __call__(self, sample: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        k_rot = random.randint(0, 3) if random.random() < self.p_rot else 0
+        do_flip_h = random.random() < self.p_flip_h
+        do_flip_v = random.random() < self.p_flip_v
+
+        for k in self.keys:
+            if k not in sample:
+                continue
+            x = sample[k]
+            if k_rot:
+                x = torch.rot90(x, k_rot, dims=(-2, -1))
+            if do_flip_h:
+                x = torch.flip(x, dims=(-1,))
+            if do_flip_v:
+                x = torch.flip(x, dims=(-2,))
+            sample[k] = x
+        return sample
+
+
 class AddGaussianNoise:
     """Add Gaussian noise to selected tensor keys (data augmentation)."""
 
