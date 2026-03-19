@@ -3,6 +3,7 @@ checkpoints/
 results/
 __pycache__/
 *.png
+!assets/*.png
 *.gif
 *.pt
 *.npz

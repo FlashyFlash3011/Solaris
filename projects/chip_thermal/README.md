@@ -1,5 +1,7 @@
 # Chip Thermal — FNO Surrogate for 2-D Steady-State Heat Conduction
 
+![Batch comparison: power map, FD solver, FNO surrogate, error](assets/compare.png)
+
 Predict the steady-state temperature field on a chip given its power-density map:
 
 ```

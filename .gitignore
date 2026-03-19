@@ -22,6 +22,7 @@ projects/*/results/*.gif
 *.log
 solver_demo.png
 .claude
+CLAUDE.md
 
 # Editor
 .vscode/
