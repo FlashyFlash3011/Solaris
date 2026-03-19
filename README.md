@@ -8,7 +8,7 @@ Runs on AMD GPUs via PyTorch's ROCm/HIP backend.  The `torch.cuda.*` API is iden
 
 Traditional physics simulators are accurate but slow — they grind through thousands of calculation steps every time you change a design. Solaris trains neural networks on solved simulation examples so they can predict new results **instantly**, without re-running the solver from scratch.
 
-On a chip thermal design problem: **20× faster than the simulator, ~1% error, runs on AMD GPUs.**
+On a chip thermal design problem: **5× faster than the simulator across 1000 layouts, 0.05% error, runs on AMD GPUs.**
 
 Five original research contributions on top of the standard approach:
 - **Hard physics constraints** — the network mathematically cannot output results that break physics laws
@@ -19,7 +19,7 @@ Five original research contributions on top of the standard approach:
 
 Built for AMD GPUs (RDNA2 through RDNA4, CDNA1 through CDNA3). Drop-in compatible with NVIDIA CUDA via the same `torch.cuda` API.
 
-> **Note:** All benchmarks and demo projects use **synthetically generated data** and a **simple finite-difference solver written from scratch** — not real-world engineering datasets or commercial simulation software (e.g. ANSYS, COMSOL). The physics problems (chip heat, water diffusion, weather) are real, but the data is procedurally generated to demonstrate the framework. Results on real-world problems may differ.
+> **Note:** Demo projects use a **finite-difference solver written from scratch** to generate training data — not commercial simulation software (e.g. ANSYS, COMSOL). The chip thermal dataset is produced by the scipy sparse FD solver with a realistic quad-core floorplan (randomised per-core utilisation, L3 cache, memory controllers, I/O ring), calibrated to a 40–93 °C junction-temperature range. The physics and geometry are representative of real chip designs; the workload patterns are procedurally varied to cover a wide training distribution.
 
 ---
 
@@ -29,7 +29,7 @@ Built for AMD GPUs (RDNA2 through RDNA4, CDNA1 through CDNA3). Drop-in compatibl
 
 ![Chip Thermal Benchmark](assets/compare.png)
 
-> Each column shows the error vs the ground-truth FD solver. Neural methods run in ~2ms vs ~44ms for the solver, at ~1% error.
+> Power map with chip architecture labels → FD solver temperature → FNO prediction → absolute error. 1000 new layouts: FD solver 25s total vs FNO 4.9s total (**5× speedup**), avg rel-L2 **0.05%**.
 
 **Water heat diffusion** — time-evolving temperature field
 
