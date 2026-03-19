@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024, Contributors
 # SPDX-License-Identifier: Apache-2.0
 
-"""PhysicsNeMo-ROCm: Physics AI framework for AMD GPUs."""
+"""Solaris: Physics AI framework for AMD GPUs."""
 
 __version__ = "0.1.0"
 
