@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024, Contributors
 # SPDX-License-Identifier: Apache-2.0
+# Tests for FNO, AFNO, ConstrainedFNO, WNO, UNO, DeepONet, and other models
 
 import torch
 import pytest
