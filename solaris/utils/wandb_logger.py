@@ -3,7 +3,7 @@
 
 """Weights & Biases logger with graceful no-op fallback."""
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 import torch.nn as nn
 
@@ -29,8 +29,8 @@ class WandbLogger:
     def __init__(
         self,
         project: str,
-        name: Optional[str] = None,
-        config: Optional[Dict[str, Any]] = None,
+        name: str | None = None,
+        config: dict[str, Any] | None = None,
         enabled: bool = True,
     ) -> None:
         self._run = None
@@ -43,7 +43,7 @@ class WandbLogger:
         except ImportError:
             pass
 
-    def log_metrics(self, metrics: Dict[str, float], step: Optional[int] = None) -> None:
+    def log_metrics(self, metrics: dict[str, float], step: int | None = None) -> None:
         """Log a dictionary of scalar metrics.
 
         Parameters
@@ -65,13 +65,17 @@ class WandbLogger:
         """
         if self._run is None:
             return
-        import tempfile, os, torch  # noqa: PLC0415, E401
+        import os
+        import tempfile  # noqa: PLC0415, E401
+
+        import torch
+        import wandb
 
         with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as f:
             path = f.name
         try:
             torch.save(model.state_dict(), path)
-            artifact = self._run._wandb.Artifact(name, type="model")
+            artifact = wandb.Artifact(name, type="model")
             artifact.add_file(path)
             self._run.log_artifact(artifact)
         finally:

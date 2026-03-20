@@ -3,9 +3,8 @@
 
 """Base Module class for all PhysicsNeMo models."""
 
-import json
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -14,7 +13,7 @@ from solaris.core.meta import ModelMetaData
 
 
 class Module(nn.Module):
-    """Base class for all PhysicsNeMo models.
+    """Base class for all Solaris models.
 
     Extends ``torch.nn.Module`` with:
     - JSON-serialisable ``__init__`` argument capture for checkpoint reconstruction.
@@ -29,12 +28,12 @@ class Module(nn.Module):
 
     _solaris_version: str = "0.1.0"
 
-    def __init__(self, meta: Optional[ModelMetaData] = None) -> None:
+    def __init__(self, meta: ModelMetaData | None = None) -> None:
         super().__init__()
         self.meta = meta or ModelMetaData()
         # Zero-element buffer used purely for device tracking — never moved manually.
         self.register_buffer("_device_buf", torch.empty(0), persistent=False)
-        self._init_args: Dict[str, Any] = {}
+        self._init_args: dict[str, Any] = {}
 
     @property
     def device(self) -> torch.device:
@@ -50,7 +49,7 @@ class Module(nn.Module):
         """
         self._init_args = kwargs
 
-    def save(self, path: Union[str, Path]) -> None:
+    def save(self, path: str | Path) -> None:
         """Save weights + init-args to *path* (a ``.pt`` file)."""
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -67,8 +66,8 @@ class Module(nn.Module):
     @classmethod
     def load(
         cls,
-        path: Union[str, Path],
-        map_location: Optional[Union[str, torch.device]] = None,
+        path: str | Path,
+        map_location: str | torch.device | None = None,
     ) -> "Module":
         """Reconstruct model from a checkpoint saved with :meth:`save`.
 
@@ -94,4 +93,4 @@ class Module(nn.Module):
 
     def __repr__(self) -> str:  # pragma: no cover
         base = super().__repr__()
-        return f"{base}\n[PhysicsNeMo | {self.meta.name} | params={self.num_parameters():,}]"
+        return f"{base}\n[Solaris | {self.meta.name} | params={self.num_parameters():,}]"

@@ -1,4 +1,20 @@
-from solaris.datapipes.dataset import PhysicsDataset
-from solaris.datapipes.transforms import Normalize, RandomCrop2d, ToDevice
+from solaris.datapipes.dataset import HDF5Dataset, PhysicsDataset, TensorDataset, build_dataloader
+from solaris.datapipes.transforms import (
+    AddGaussianNoise,
+    Normalize,
+    RandomCrop2d,
+    SymmetryAugmentation,
+    ToDevice,
+)
 
-__all__ = ["PhysicsDataset", "Normalize", "RandomCrop2d", "ToDevice"]
+__all__ = [
+    "PhysicsDataset",
+    "TensorDataset",
+    "HDF5Dataset",
+    "build_dataloader",
+    "Normalize",
+    "RandomCrop2d",
+    "ToDevice",
+    "SymmetryAugmentation",
+    "AddGaussianNoise",
+]

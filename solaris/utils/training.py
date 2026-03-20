@@ -91,3 +91,125 @@ class GradientClipper:
                 model.parameters(), self.max_norm, norm_type=self.norm_type
             )
         )
+
+
+class WarmupCosineScheduler:
+    """Learning rate scheduler with linear warmup followed by cosine decay.
+
+    Wraps :class:`torch.optim.lr_scheduler.CosineAnnealingLR` with an
+    initial linear warmup phase.  Call :meth:`step` once per epoch.
+
+    Parameters
+    ----------
+    optimizer : torch.optim.Optimizer
+    warmup_epochs : int
+        Number of epochs to linearly ramp the LR from 0 to ``base_lr``.
+    total_epochs : int
+        Total training epochs (including warmup).
+    base_lr : float
+        Peak learning rate (after warmup).
+    min_lr : float
+        Minimum LR at the end of cosine decay.
+    """
+
+    def __init__(
+        self,
+        optimizer: torch.optim.Optimizer,
+        warmup_epochs: int,
+        total_epochs: int,
+        base_lr: float,
+        min_lr: float = 0.0,
+    ) -> None:
+        self.optimizer = optimizer
+        self.warmup_epochs = warmup_epochs
+        self.total_epochs = total_epochs
+        self.base_lr = base_lr
+        self.min_lr = min_lr
+        self._epoch = 0
+        self._cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=max(1, total_epochs - warmup_epochs),
+            eta_min=min_lr,
+        )
+        for pg in optimizer.param_groups:
+            pg["lr"] = 0.0
+
+    def step(self) -> float:
+        """Advance one epoch and return the new learning rate."""
+        self._epoch += 1
+        if self._epoch <= self.warmup_epochs:
+            lr = self.base_lr * self._epoch / max(1, self.warmup_epochs)
+            for pg in self.optimizer.param_groups:
+                pg["lr"] = lr
+        else:
+            self._cosine.step()
+            lr = self.optimizer.param_groups[0]["lr"]
+        return lr
+
+    @property
+    def last_lr(self) -> float:
+        """Current learning rate."""
+        return self.optimizer.param_groups[0]["lr"]
+
+
+class AutoCheckpoint:
+    """Save the best model checkpoint automatically during training.
+
+    Monitors a scalar metric and saves the model whenever an improvement
+    is recorded.  Uses :meth:`solaris.core.Module.save` when available,
+    falling back to ``torch.save`` on the raw state dict.
+
+    Parameters
+    ----------
+    path : str or Path
+        File path for the checkpoint.
+    mode : str
+        ``"min"`` (lower is better) or ``"max"`` (higher is better).
+    min_delta : float
+        Minimum change to count as improvement.
+    """
+
+    def __init__(
+        self,
+        path,
+        mode: str = "min",
+        min_delta: float = 0.0,
+    ) -> None:
+        import pathlib
+        assert mode in ("min", "max"), "mode must be 'min' or 'max'"
+        self.path = pathlib.Path(path)
+        self.mode = mode
+        self.min_delta = min_delta
+        self._best: float = float("inf") if mode == "min" else float("-inf")
+
+    def update(self, model: nn.Module, metric: float) -> bool:
+        """Save model if metric improved.
+
+        Parameters
+        ----------
+        model : nn.Module
+        metric : float
+
+        Returns
+        -------
+        bool
+            ``True`` if the checkpoint was updated (metric improved).
+        """
+        improved = (
+            metric < self._best - self.min_delta
+            if self.mode == "min"
+            else metric > self._best + self.min_delta
+        )
+        if improved:
+            self._best = metric
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            if hasattr(model, "save"):
+                model.save(self.path)
+            else:
+                torch.save(model.state_dict(), self.path)
+        return improved
+
+    @property
+    def best(self) -> float:
+        """Best metric value seen so far."""
+        return self._best
