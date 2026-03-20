@@ -51,6 +51,14 @@ fno = "solaris.models.fno:FNO"
 afno = "solaris.models.afno:AFNO"
 mlp = "solaris.models.mlp:FullyConnected"
 meshgraphnet = "solaris.models.meshgraphnet:MeshGraphNet"
+wno = "solaris.models.wno:WNO"
+uno = "solaris.models.uno:UNO"
+deeponet = "solaris.models.deeponet:DeepONet"
+constrained_fno = "solaris.models.constrained_fno:ConstrainedFNO"
+multiscale_fno = "solaris.models.multiscale_fno:MultiScaleFNO"
+coupled_operator = "solaris.models.coupled:CoupledOperator"
+conformal = "solaris.models.conformal:ConformalNeuralOperator"
+residual_corrector = "solaris.models.residual_corrector:NeuralResidualCorrector"
 
 [tool.hatch.build.targets.wheel]
 packages = ["solaris"]

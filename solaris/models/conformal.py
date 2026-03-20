@@ -62,11 +62,11 @@ class ConformalNeuralOperator(nn.Module):
         self.model = model
         # q_hat is the calibrated quantile threshold; inf until calibrated
         self.register_buffer("_q_hat", torch.tensor(float("inf")))
-        self._calibrated = False
+        self.register_buffer("_calibrated_buf", torch.zeros(1, dtype=torch.bool))
 
     @property
     def is_calibrated(self) -> bool:
-        return self._calibrated
+        return bool(self._calibrated_buf.item())
 
     @torch.no_grad()
     def calibrate(
@@ -112,7 +112,7 @@ class ConformalNeuralOperator(nn.Module):
         q_hat = torch.quantile(scores, level)
 
         self._q_hat = q_hat.to(device)
-        self._calibrated = True
+        self._calibrated_buf.fill_(True)
         return q_hat.item()
 
     @torch.no_grad()
@@ -132,7 +132,7 @@ class ConformalNeuralOperator(nn.Module):
         upper : torch.Tensor   point_pred + q̂
         point_pred : torch.Tensor   raw model output
         """
-        if not self._calibrated:
+        if not self.is_calibrated:
             raise RuntimeError(
                 "Model not calibrated. Call calibrate(cal_inputs, cal_targets) first."
             )
