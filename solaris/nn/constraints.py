@@ -8,7 +8,6 @@ satisfy the physical law, regardless of network weights. This is fundamentally
 different from soft PDE loss penalties that only penalise violations.
 """
 
-from typing import List
 
 import torch
 import torch.nn as nn
@@ -234,8 +233,8 @@ class NeumannBCLayer(nn.Module):
             idx_last[d] = -1
             idx_second_last[d] = -2
 
-            x[idx_first] = x[idx_second]
-            x[idx_last] = x[idx_second_last]
+            x[tuple(idx_first)] = x[tuple(idx_second)]
+            x[tuple(idx_last)] = x[tuple(idx_second_last)]
         return x
 
 
