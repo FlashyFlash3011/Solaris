@@ -2,17 +2,18 @@
 # SPDX-License-Identifier: Apache-2.0
 # Tests for FNO, AFNO, ConstrainedFNO, WNO, UNO, DeepONet, and other models
 
-import torch
 import pytest
-from solaris.models import FNO, AFNO, FullyConnected, MeshGraphNet
+import torch
+
+from solaris.models import AFNO, FNO, MeshGraphNet
+from solaris.models.conformal import ConformalNeuralOperator
 from solaris.models.constrained_fno import ConstrainedFNO
-from solaris.models.wno import WNO
-from solaris.models.uno import UNO
+from solaris.models.coupled import CoupledOperator
 from solaris.models.deeponet import DeepONet
 from solaris.models.multiscale_fno import MultiScaleFNO
-from solaris.models.coupled import CoupledOperator
-from solaris.models.conformal import ConformalNeuralOperator
 from solaris.models.residual_corrector import NeuralResidualCorrector
+from solaris.models.uno import UNO
+from solaris.models.wno import WNO
 
 
 @pytest.mark.parametrize("dim,shape", [
