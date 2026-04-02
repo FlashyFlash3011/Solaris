@@ -63,10 +63,11 @@ class SpectralConv2d(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         bsz, _, nx, ny = x.shape
+        mx, my = self.modes_x, self.modes_y
         x_ft = torch.fft.rfft2(x, norm="ortho")
         out_ft = torch.zeros(bsz, self.out_channels, nx, ny // 2 + 1, dtype=torch.cfloat, device=x.device)
-        out_ft[:, :, : self.modes_x, : self.modes_y] = self._mul(x_ft[:, :, : self.modes_x, : self.modes_y], self.weights1)
-        out_ft[:, :, -self.modes_x :, : self.modes_y] = self._mul(x_ft[:, :, -self.modes_x :, : self.modes_y], self.weights2)
+        out_ft[:, :, :mx, :my] = self._mul(x_ft[:, :, :mx, :my], self.weights1[:, :, :mx, :my])
+        out_ft[:, :, -mx:, :my] = self._mul(x_ft[:, :, -mx:, :my], self.weights2[:, :, :mx, :my])
         return torch.fft.irfft2(out_ft, s=(nx, ny), norm="ortho")
 
 

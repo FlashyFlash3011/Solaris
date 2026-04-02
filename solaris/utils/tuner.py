@@ -27,10 +27,12 @@ class HyperparameterTuner:
         n_trials: int = 50,
         direction: str = "minimize",
         study_name: Optional[str] = None,
+        use_hyperband: bool = True,
     ) -> None:
         self.n_trials = n_trials
         self.direction = direction
         self.study_name = study_name
+        self.use_hyperband = use_hyperband
 
     def suggest_fno_params(self, trial: Any) -> Dict[str, Any]:
         """Suggest FNO hyperparameters for an Optuna trial.
@@ -74,9 +76,15 @@ class HyperparameterTuner:
             ) from e
 
         optuna.logging.set_verbosity(optuna.logging.WARNING)
+        pruner = (
+            optuna.pruners.HyperbandPruner(min_resource=1, max_resource="auto", reduction_factor=3)
+            if self.use_hyperband
+            else optuna.pruners.NopPruner()
+        )
         study = optuna.create_study(
             direction=self.direction,
             study_name=self.study_name,
+            pruner=pruner,
         )
         study.optimize(objective_fn, n_trials=self.n_trials)
         return study.best_params

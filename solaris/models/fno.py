@@ -7,6 +7,7 @@ from typing import List, Optional
 
 import torch
 import torch.nn as nn
+from torch.utils.checkpoint import checkpoint as grad_checkpoint
 
 from solaris.core.meta import ModelMetaData
 from solaris.core.module import Module
@@ -82,12 +83,14 @@ class FNO(Module):
         n_layers: int = 4,
         modes: int | List[int] = 12,
         dim: int = 2,
+        gradient_checkpointing: bool = False,
     ) -> None:
         super().__init__(meta=self._meta)
         assert dim in (1, 2, 3), "dim must be 1, 2, or 3"
         if isinstance(modes, int):
             modes = [modes] * dim
         self.dim = dim
+        self.gradient_checkpointing = gradient_checkpointing
         self.lift = nn.Conv1d(in_channels, hidden_channels, 1) if dim == 1 else (
             nn.Conv2d(in_channels, hidden_channels, 1) if dim == 2 else
             nn.Conv3d(in_channels, hidden_channels, 1)
@@ -113,8 +116,36 @@ class FNO(Module):
             dim=dim,
         )
 
+    def set_modes(self, new_modes: int) -> None:
+        """Dynamically update the active Fourier mode count (DP curriculum training).
+
+        Adjusts ``modes_x/y/z`` on every spectral layer without reallocating
+        parameter tensors — the weights are already initialised at full size.
+        Only modes up to the initialised maximum can be activated.
+        """
+        for block in self.blocks:
+            sc = block.spectral
+            # 1-D: SpectralConv1d uses `weights` (no suffix)
+            # 2-D/3-D: SpectralConv2d/3d use `weights1`, `weights2`, ...
+            if hasattr(sc, "weights1"):
+                w_ref = sc.weights1
+            elif hasattr(sc, "weights"):
+                w_ref = sc.weights
+            else:
+                continue
+            if hasattr(sc, "modes_x"):
+                sc.modes_x = min(new_modes, w_ref.shape[2])
+            if hasattr(sc, "modes_y"):
+                sc.modes_y = min(new_modes, w_ref.shape[3])
+            if hasattr(sc, "modes_z"):
+                sc.modes_z = min(new_modes, w_ref.shape[4])
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.lift(x)
+        use_ckpt = self.gradient_checkpointing and self.training
         for block in self.blocks:
-            x = block(x)
+            if use_ckpt:
+                x = grad_checkpoint(block, x, use_reentrant=False)
+            else:
+                x = block(x)
         return self.proj(x)
