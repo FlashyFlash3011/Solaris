@@ -236,15 +236,15 @@ def run_comparison(args):
     log.info("=" * 70)
     log.info(f"  Batch: {N} chip layouts")
     log.info(f"  FD Solver   : {fd_time:.1f}s  ({fd_ms:.1f} ms/layout)")
-    log.info(f"  Pre-DP  FNO : {pre_time*1000:.0f}ms  ({pre_ms:.3f} ms/layout)  "
-             f"speedup={speedup_pre:.0f}×  rel-L2 avg={np.mean(rl2_pre):.4f}")
+    log.info(f"  Pre-DP  FNO : {pre_time*1000:.0f}ms  ({pre_ms:.2f} ms/layout)  "
+             f"speedup={speedup_pre:.2f}×  rel-L2 avg={np.mean(rl2_pre):.4f}")
     post_tag = f"  Post-DP {post_type:10s}"
     post_policy_str = ""
     if solver_calls_saved:
         pct_saved = 100 * solver_calls_saved / N
         post_policy_str = f"  FD calls saved: {solver_calls_saved}/{N} ({pct_saved:.0f}%)"
-    log.info(f"{post_tag}: {post_time*1000:.0f}ms  ({post_ms:.3f} ms/layout)  "
-             f"speedup={speedup_post:.0f}×  rel-L2 avg={np.mean(rl2_post):.4f}"
+    log.info(f"{post_tag}: {post_time*1000:.0f}ms  ({post_ms:.2f} ms/layout)  "
+             f"speedup={speedup_post:.2f}×  rel-L2 avg={np.mean(rl2_post):.4f}"
              f"{post_policy_str}")
     log.info("=" * 70)
 
@@ -323,11 +323,11 @@ def _plot(Q_all, T_fd, T_pre, T_post,
     vmin_T = T_ambient
     vmax_T = float(T0_fd.max())
 
-    fig = plt.figure(figsize=(22, 10))
+    fig = plt.figure(figsize=(26, 12))
     fig.patch.set_facecolor("#0d0d0d")
     gs = gridspec.GridSpec(2, 4, figure=fig,
-                           wspace=0.35, hspace=0.45,
-                           left=0.04, right=0.97, top=0.88, bottom=0.05)
+                           wspace=0.38, hspace=0.52,
+                           left=0.04, right=0.97, top=0.89, bottom=0.04)
 
     axes = [[fig.add_subplot(gs[r, c]) for c in range(4)] for r in range(2)]
 
@@ -350,16 +350,16 @@ def _plot(Q_all, T_fd, T_pre, T_post,
     for fx, fy, label in LAYOUT_LABELS:
         txt = axes[0][0].text(
             fx * (Q0.shape[1] - 1), fy * (Q0.shape[0] - 1), label,
-            color="white", fontsize=5.5, ha="center", va="center", fontweight="bold",
+            color="white", fontsize=8, ha="center", va="center", fontweight="bold",
         )
-        txt.set_path_effects([pe.Stroke(linewidth=2, foreground="black"), pe.Normal()])
+        txt.set_path_effects([pe.Stroke(linewidth=2.5, foreground="black"), pe.Normal()])
 
     # ── Row 0, Col 1: FD Ground Truth ──
     im = axes[0][1].imshow(T0_fd, cmap="inferno", origin="lower",
                             vmin=vmin_T, vmax=vmax_T, interpolation="bilinear")
     axes[0][1].set_title(
         f"Traditional FD Solver\nT [°C]  ·  {fd_ms:.1f} ms/layout",
-        fontsize=9, color="white", pad=6,
+        fontsize=10, color="white", pad=7,
     )
     _cbar(im, axes[0][1])
 
@@ -367,8 +367,8 @@ def _plot(Q_all, T_fd, T_pre, T_post,
     im = axes[0][2].imshow(T0_pre, cmap="inferno", origin="lower",
                             vmin=vmin_T, vmax=vmax_T, interpolation="bilinear")
     axes[0][2].set_title(
-        f"Pre-DP FNO\nT [°C]  ·  {pre_ms:.3f} ms/layout  ·  {speedup_pre:.0f}× faster",
-        fontsize=9, color="white", pad=6,
+        f"Pre-DP FNO\nT [°C]  ·  {pre_ms:.2f} ms/layout  ·  {speedup_pre:.2f}× vs FD",
+        fontsize=10, color="white", pad=7,
     )
     _cbar(im, axes[0][2])
 
@@ -380,37 +380,47 @@ def _plot(Q_all, T_fd, T_pre, T_post,
     im = axes[0][3].imshow(T0_post, cmap="inferno", origin="lower",
                             vmin=vmin_T, vmax=vmax_T, interpolation="bilinear")
     axes[0][3].set_title(
-        f"Post-DP {post_type}\nT [°C]  ·  {post_ms:.3f} ms/layout  ·  "
-        f"{speedup_post:.0f}× faster{policy_str}",
-        fontsize=9, color="white", pad=6,
+        f"Post-DP {post_type}\nT [°C]  ·  {post_ms:.2f} ms/layout  ·  "
+        f"{speedup_post:.2f}× vs FD{policy_str}",
+        fontsize=10, color="white", pad=7,
     )
     _cbar(im, axes[0][3])
 
     # ── Row 1, Col 0: Stats panel (text) ──
     axes[1][0].set_xlim(0, 1); axes[1][0].set_ylim(0, 1)
-    stats_text = (
-        f"Batch: {N} layouts\n\n"
-        f"rel-L2 (avg)\n"
-        f"  Pre-DP :  {np.mean(rl2_pre)*100:.2f}%\n"
-        f"  Post-DP:  {np.mean(rl2_post)*100:.2f}%\n\n"
-        f"rel-L2 (max)\n"
-        f"  Pre-DP :  {np.max(rl2_pre)*100:.2f}%\n"
-        f"  Post-DP:  {np.max(rl2_post)*100:.2f}%\n\n"
-        f"Speedup vs FD\n"
-        f"  Pre-DP :  {speedup_pre:.0f}×\n"
-        f"  Post-DP:  {speedup_post:.0f}×"
-    )
-    axes[1][0].text(
-        0.08, 0.92, stats_text,
-        color="white", fontsize=8, va="top", ha="left",
-        family="monospace",
-        transform=axes[1][0].transAxes,
-    )
+    col_w = 0.55   # left column width (labels)
+    rows = [
+        ("Batch",         f"{N} layouts"),
+        ("",              ""),
+        ("rel-L2 avg",    ""),
+        ("  Pre-DP",      f"{np.mean(rl2_pre)*100:.2f}%"),
+        ("  Post-DP",     f"{np.mean(rl2_post)*100:.2f}%"),
+        ("",              ""),
+        ("rel-L2 max",    ""),
+        ("  Pre-DP",      f"{np.max(rl2_pre)*100:.2f}%"),
+        ("  Post-DP",     f"{np.max(rl2_post)*100:.2f}%"),
+        ("",              ""),
+        ("Speedup vs FD", ""),
+        ("  Pre-DP",      f"{speedup_pre:.2f}×"),
+        ("  Post-DP",     f"{speedup_post:.2f}×"),
+    ]
+    y = 0.95
+    dy = 0.065
+    for label, value in rows:
+        if label:
+            axes[1][0].text(0.05, y, label, color="#aaaaaa", fontsize=9,
+                            va="top", ha="left", family="monospace",
+                            transform=axes[1][0].transAxes)
+        if value:
+            axes[1][0].text(col_w, y, value, color="white", fontsize=9,
+                            va="top", ha="left", family="monospace",
+                            transform=axes[1][0].transAxes)
+        y -= dy
 
     # ── Row 1, Col 1: blank (FD is reference) ──
     axes[1][1].text(
-        0.5, 0.5, "Ground Truth\n(reference)", color="#888888",
-        fontsize=10, ha="center", va="center",
+        0.5, 0.5, "Ground Truth\n(reference — no error)", color="#666666",
+        fontsize=11, ha="center", va="center",
         transform=axes[1][1].transAxes,
     )
 
@@ -421,7 +431,7 @@ def _plot(Q_all, T_fd, T_pre, T_post,
     axes[1][2].set_title(
         f"|Error|  Pre-DP  [°C]\nMax: {err_pre.max():.2f}°C  ·  "
         f"Rel-L2: {float(rl2_pre[idx])*100:.2f}%",
-        fontsize=9, color="white", pad=6,
+        fontsize=10, color="white", pad=7,
     )
     _cbar(im, axes[1][2])
 
@@ -431,7 +441,7 @@ def _plot(Q_all, T_fd, T_pre, T_post,
     axes[1][3].set_title(
         f"|Error|  Post-DP  [°C]\nMax: {err_post.max():.2f}°C  ·  "
         f"Rel-L2: {float(rl2_post[idx])*100:.2f}%",
-        fontsize=9, color="white", pad=6,
+        fontsize=10, color="white", pad=7,
     )
     _cbar(im, axes[1][3])
 
@@ -442,9 +452,9 @@ def _plot(Q_all, T_fd, T_pre, T_post,
     fig.suptitle(
         f"DP × Chip-Thermal  ·  {N} layouts  ·  "
         f"FD: {fd_ms:.1f} ms  ·  "
-        f"Pre-DP: {pre_ms:.3f} ms ({speedup_pre:.0f}×)  ·  "
-        f"Post-DP: {post_ms:.3f} ms ({speedup_post:.0f}×)",
-        fontsize=12, fontweight="bold", color="white", y=0.97,
+        f"Pre-DP: {pre_ms:.2f} ms ({speedup_pre:.0f}×)  ·  "
+        f"Post-DP [{post_type}]: {post_ms:.2f} ms ({speedup_post:.0f}×)",
+        fontsize=13, fontweight="bold", color="white", y=0.975,
     )
 
     out = Path(args.output)
@@ -459,9 +469,10 @@ def _plot(Q_all, T_fd, T_pre, T_post,
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
-    p.add_argument("--pre_checkpoint",  default="checkpoints/best_fno.pt",
+    _here = Path(__file__).parent
+    p.add_argument("--pre_checkpoint",  default=str(_here / "checkpoints/best_fno.pt"),
                    help="Pre-DP (plain FNO) checkpoint")
-    p.add_argument("--post_checkpoint", default="checkpoints/best_residual.pt",
+    p.add_argument("--post_checkpoint", default=str(_here / "checkpoints/best_residual.pt"),
                    help="Post-DP model checkpoint (residual or constrained)")
     p.add_argument("--device",      default="cuda")
     p.add_argument("--n_batch",     type=int, default=1000,
@@ -472,5 +483,5 @@ if __name__ == "__main__":
                    help="RNG seed for layout generation (different from training)")
     p.add_argument("--dp_policy",   action="store_true",
                    help="Enable DP rollout policy for post-DP residual model")
-    p.add_argument("--output",      default="results/compare_dp.png")
+    p.add_argument("--output",      default=str(_here / "results/compare_dp.png"))
     run_comparison(p.parse_args())

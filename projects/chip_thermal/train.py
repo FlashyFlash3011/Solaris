@@ -556,7 +556,7 @@ if __name__ == "__main__":
     p.add_argument("--hidden",         type=int,   default=64)
     p.add_argument("--modes",          type=int,   default=16)
     p.add_argument("--n_layers",       type=int,   default=4)
-    p.add_argument("--checkpoint_dir", default="checkpoints")
+    p.add_argument("--checkpoint_dir", default=str(Path(__file__).parent / "checkpoints"))
     # DP flags
     p.add_argument("--model",          default="fno",
                    choices=["fno", "constrained", "residual"],
