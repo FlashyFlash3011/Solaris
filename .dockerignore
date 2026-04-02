@@ -1,0 +1,10 @@
+.git
+__pycache__
+venv
+env
+.env
+data/
+results/
+*.ckpt
+*.pt
+*.pth
