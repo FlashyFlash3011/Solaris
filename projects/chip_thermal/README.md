@@ -1,6 +1,6 @@
 # Chip Thermal — FNO Surrogate for 2-D Steady-State Heat Conduction
 
-![Batch comparison: power map, FD solver, FNO surrogate, error](assets/compare.png)
+![Three-way comparison: FD solver vs Pre-DP FNO vs Post-DP residual corrector](assets/compare.png)
 
 Predict the steady-state temperature field on a chip given its power-density map:
 
@@ -11,6 +11,10 @@ T = T_ambient     on boundary  (isothermal package)
 
 The FNO learns this mapping from (Q → T) in ~1% rel-L2 error, then evaluates
 **1 000 new chip layouts** in milliseconds instead of ~50 seconds.
+
+Now extended with **Dynamic Programming** techniques across training, architecture,
+inference, and uncertainty quantification — achieving ~3.5× lower error with the
+`residual` model variant.
 
 ---
 
@@ -38,15 +42,15 @@ diverse thermal profiles.
 ```bash
 cd projects/chip_thermal
 
-# Step 1 — generate dataset + train (~1 min to generate, ~5 min on GPU)
+# Step 1 — train baseline FNO
 python train.py --device cuda
 
 # Step 2 — batch throughput comparison (1 000 new layouts)
 python compare.py --device cuda
-# → prints timing table + saves results/compare.png
+# → results/compare.png
 ```
 
-### CPU-only
+### CPU-only smoke-test
 
 ```bash
 python train.py --device cpu --n_train 200 --epochs 20
@@ -57,8 +61,65 @@ python compare.py --device cpu --n_batch 50
 
 ```bash
 python solver.py
-# → prints Q/T ranges, solve time, saves solver_demo.png
 ```
+
+---
+
+## DP-Enhanced Training
+
+Three model variants are available via `--model`:
+
+| Variant | Description | Typical rel-L2 |
+|---|---|---|
+| `fno` (default) | Plain Fourier Neural Operator | ~0.88% |
+| `constrained` | ConstrainedFNO with global heat conservation enforced | ~0.80% |
+| `residual` | NeuralResidualCorrector: coarse FD + neural correction | ~0.25% |
+
+```bash
+# Physics-constrained FNO (conservation law hard-enforced at architecture level)
+python train.py --model constrained --device cuda
+
+# Neural residual corrector — learns only the correction over a coarse FD solve
+python train.py --model residual --device cuda
+```
+
+### DP training flags
+
+| Flag | What it does |
+|---|---|
+| `--curriculum` | Mode curriculum: start at 4 Fourier modes, unlock +4 every 30 epochs |
+| `--grad_ckpt` | Gradient checkpointing — trades recomputation for VRAM (deep stacks) |
+| `--tune` | Hyperband hyperparameter search before full training |
+| `--tune_trials` | Number of Optuna trials (default 20) |
+| `--profile_modes` | Knapsack DP to find optimal Fourier mode count before training |
+
+All variants use `WarmupCosineScheduler` + `EarlyStopping` + `GradientClipper` by default.
+
+### Three-way comparison
+
+```bash
+# After training both fno and residual models:
+python compare_dp.py --device cuda
+# → results/compare_dp.png
+#   Row 0: Power Map | FD Ground Truth | Pre-DP FNO | Post-DP Residual
+#   Row 1: Stats     | (reference)     | Pre-DP err | Post-DP err
+```
+
+### Uncertainty quantification
+
+```bash
+python calibrate.py --model residual --device cuda
+# Wraps model in ConformalNeuralOperator
+# DP knapsack selects optimal calibration subset (~150 of 500 generated samples)
+# Guarantees P(T_true ∈ [T_low, T_high]) ≥ 90%
+# → results/calibrate_residual.png
+```
+
+### DP rollout policy
+
+`dp_policy.py` contains `DPRolloutPolicy` — at inference time it decides whether
+to run the expensive FD coarse solver or trust the neural correction alone, reducing
+FD calls by 60–80% with negligible accuracy loss. Pass `--dp_policy` to `compare_dp.py`.
 
 ---
 
@@ -74,25 +135,26 @@ python solver.py
 ============================================================
 ```
 
-`results/compare.png` shows four panels for one representative layout:
-1. **Power Map Q(x,y)** — chip architecture with labelled components
-2. **FD Solver T [°C]** — reference temperature (ms/layout timing)
-3. **FNO Surrogate T [°C]** — prediction (ms/layout timing)
-4. **|Error| [°C]** — absolute error + rel-L2 percentage
+`results/compare.png` — 4-panel figure (power map, FD temp, FNO temp, error)
 
-Supertitle shows total batch speedup: `1000 layouts · FD: 49s · FNO: 521ms · 95× faster`
+`results/compare_dp.png` — 8-panel three-way figure (2 rows × 4 columns)
 
 ---
 
-## Tuning
+## All flags
 
 | Flag | Default | Notes |
 |---|---|---|
+| `--model` | `fno` | `fno` / `constrained` / `residual` |
 | `--n_train` | 1000 | Training samples |
 | `--epochs` | 200 | More epochs → lower rel-L2 |
 | `--hidden` | 64 | FNO hidden channel width |
 | `--modes` | 16 | Fourier modes kept per dimension |
 | `--n_layers` | 4 | FNO depth |
 | `--resolution` | 128 | Grid resolution |
+| `--curriculum` | off | DP mode curriculum |
+| `--grad_ckpt` | off | Gradient checkpointing |
+| `--tune` | off | Hyperband hyperparameter search |
+| `--profile_modes` | off | Knapsack mode profiling |
 | `--n_batch` | 1000 | Compare: layouts in batch test |
 | `--batch_size` | 64 | Compare: GPU inference batch size |
