@@ -11,8 +11,7 @@
 #       -v $(pwd):/workspace \
 #       solaris:latest bash
 
-FROM rocm/pytorch:rocm6.2_ubuntu22.04_py3.10_pytorch_release_2.4.0
-
+FROM rocm/pytorch:rocm6.2_ubuntu22.04_py3.10_pytorch_release_2.3.0
 # GPU targets — edit to match your hardware:
 #   gfx906  = MI50/MI60        (Vega20)
 #   gfx908  = MI100            (CDNA1)
