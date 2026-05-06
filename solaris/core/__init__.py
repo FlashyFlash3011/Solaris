@@ -5,4 +5,15 @@ from solaris.core.meta import ModelMetaData
 from solaris.core.module import Module
 from solaris.core.registry import ModelRegistry
 
-__all__ = ["Module", "ModelMetaData", "ModelRegistry"]
+from solaris.exceptions import (
+    ExperimentalFeatureWarning,
+    FutureFeatureWarning,
+    LegacyFeatureWarning,
+    SolarisWarning,
+)
+
+__all__ = [
+    "Module", "ModelMetaData", "ModelRegistry",
+    "SolarisWarning", "ExperimentalFeatureWarning", 
+    "FutureFeatureWarning", "LegacyFeatureWarning"
+]
