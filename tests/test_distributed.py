@@ -7,6 +7,7 @@ These tests run without spawning multiple processes; they validate the
 manager's behaviour in the common single-GPU / single-CPU case.
 """
 
+import pytest
 import torch
 
 from solaris.distributed import DistributedManager
@@ -67,3 +68,18 @@ def test_distributed_manager_initialize_idempotent():
     manager.initialize()
     manager.initialize()  # should not raise
     assert manager.rank == 0
+
+
+def test_distributed_manager_get_group_missing():
+    """get_group() raises KeyError for unknown names."""
+    manager = DistributedManager()
+    manager.initialize()
+    with pytest.raises(KeyError, match="tensor_parallel"):
+        manager.get_group("tensor_parallel")
+
+
+def test_distributed_manager_repr_includes_groups():
+    manager = DistributedManager()
+    manager.initialize()
+    r = repr(manager)
+    assert "named_groups" in r
