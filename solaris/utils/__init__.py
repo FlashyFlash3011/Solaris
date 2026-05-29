@@ -9,8 +9,10 @@ from solaris.utils.logging import get_logger
 from solaris.utils.seed import set_deterministic, set_seed
 from solaris.utils.training import (
     AutoCheckpoint,
+    CombinedOptimizer,
     EarlyStopping,
     GradientClipper,
+    StaticCaptureTraining,
     WarmupCosineScheduler,
 )
 from solaris.utils.tuner import HyperparameterTuner
@@ -26,6 +28,8 @@ __all__ = [
     "GradientClipper",
     "WarmupCosineScheduler",
     "AutoCheckpoint",
+    "CombinedOptimizer",
+    "StaticCaptureTraining",
     "WandbLogger",
     "HyperparameterTuner",
     "export_onnx",
