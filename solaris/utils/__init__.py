@@ -6,6 +6,7 @@ from solaris.utils.checkpoint import (
 )
 from solaris.utils.export import export_onnx
 from solaris.utils.logging import get_logger
+from solaris.utils.profiling import active_backend, mark, profile, solaris_profile
 from solaris.utils.seed import set_deterministic, set_seed
 from solaris.utils.training import (
     AutoCheckpoint,
@@ -32,6 +33,10 @@ __all__ = [
     "StaticCaptureTraining",
     "WandbLogger",
     "HyperparameterTuner",
+    "solaris_profile",
+    "profile",
+    "mark",
+    "active_backend",
     "export_onnx",
     "set_seed",
     "set_deterministic",
