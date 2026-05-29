@@ -7,7 +7,12 @@ import torch
 import torch.nn as nn
 
 from solaris.models.fno import FNO
-from solaris.utils.checkpoint import load_checkpoint, save_checkpoint
+from solaris.utils.checkpoint import (
+    load_checkpoint,
+    load_checkpoint_distributed,
+    save_checkpoint,
+    save_checkpoint_distributed,
+)
 from solaris.utils.training import EarlyStopping, GradientClipper
 
 
@@ -132,6 +137,7 @@ def test_backward_pass_fno():
 
 def test_backward_pass_uno():
     from solaris.models.uno import UNO
+
     model = UNO(in_channels=1, out_channels=1, hidden_channels=8, n_levels=2, modes=4)
     x = torch.randn(2, 1, 32, 32)
     out = model(x)
@@ -142,9 +148,33 @@ def test_backward_pass_uno():
 
 def test_backward_pass_wno():
     from solaris.models.wno import WNO
+
     model = WNO(in_channels=1, out_channels=1, hidden_channels=8, n_layers=2, levels=2)
     x = torch.randn(2, 1, 32, 32)
     out = model(x)
     out.sum().backward()
     grads = [p.grad for p in model.parameters() if p.grad is not None]
     assert len(grads) > 0
+
+
+def test_save_checkpoint_distributed_fallback(tmp_path):
+    """Non-FSDP model falls back to standard save_checkpoint."""
+    model = FNO(in_channels=1, out_channels=1, hidden_channels=8, n_layers=1, modes=4, dim=2)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    path = tmp_path / "dist_ckpt.pt"
+
+    save_checkpoint_distributed(path, model, optimizer, epoch=3, loss=0.7)
+    model2 = FNO(in_channels=1, out_channels=1, hidden_channels=8, n_layers=1, modes=4, dim=2)
+    ckpt = load_checkpoint(path, model2, map_location="cpu")
+    assert ckpt["epoch"] == 3
+
+
+def test_load_checkpoint_distributed_fallback(tmp_path):
+    """Non-FSDP model falls back to standard load_checkpoint."""
+    model = FNO(in_channels=1, out_channels=1, hidden_channels=8, n_layers=1, modes=4, dim=2)
+    path = tmp_path / "dist_load.pt"
+    save_checkpoint(path, model, epoch=7, loss=0.1)
+
+    model2 = FNO(in_channels=1, out_channels=1, hidden_channels=8, n_layers=1, modes=4, dim=2)
+    ckpt = load_checkpoint_distributed(path, model2, map_location="cpu")
+    assert ckpt["epoch"] == 7
