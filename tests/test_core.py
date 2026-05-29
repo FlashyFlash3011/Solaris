@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import torch
-import pytest
-from solaris.core import Module, ModelMetaData, ModelRegistry
+
+from solaris.core import ModelMetaData, Module
 from solaris.models.mlp import FullyConnected
 
 
@@ -48,3 +48,26 @@ def test_model_metadata():
     meta = ModelMetaData(name="Test", nvp_tags=["pde"])
     assert meta.name == "Test"
     assert "pde" in meta.nvp_tags
+
+
+def test_from_checkpoint(tmp_path):
+    model = DummyModel(size=8)
+    path = tmp_path / "model.pt"
+    model.save(path)
+
+    # Reconstruct without specifying DummyModel explicitly
+    loaded = Module.from_checkpoint(path, map_location="cpu")
+    assert isinstance(loaded, DummyModel)
+    x = torch.randn(2, 8)
+    torch.testing.assert_close(model(x), loaded(x))
+
+
+def test_from_torch():
+    inner = torch.nn.Linear(4, 2)
+    wrapper = Module.from_torch(inner)
+
+    assert wrapper.meta.name == "Linear"
+    assert wrapper.num_parameters() == inner.weight.numel() + inner.bias.numel()
+
+    x = torch.randn(3, 4)
+    torch.testing.assert_close(wrapper(x), inner(x))

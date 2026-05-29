@@ -3,6 +3,7 @@
 
 """Base Module class for all PhysicsNeMo models."""
 
+import importlib
 from pathlib import Path
 from typing import Any
 
@@ -86,6 +87,72 @@ class Module(nn.Module):
         model = cls(**ckpt["init_args"])
         model.load_state_dict(ckpt["state_dict"])
         return model
+
+    @classmethod
+    def from_checkpoint(
+        cls,
+        path: str | Path,
+        map_location: str | torch.device | None = None,
+    ) -> "Module":
+        """Reconstruct any Solaris model from a checkpoint without knowing its class.
+
+        Reads the ``"class"`` field stored in the checkpoint to dynamically
+        import and instantiate the correct subclass.  Useful when loading
+        checkpoints whose model type is not known at call-site.
+
+        Parameters
+        ----------
+        path :
+            Path to a ``.pt`` file produced by :meth:`save`.
+        map_location :
+            Device remapping passed to ``torch.load``.
+        """
+        if map_location is None:
+            map_location = "cuda" if torch.cuda.is_available() else "cpu"
+        ckpt = torch.load(path, map_location=map_location, weights_only=False)
+        dotted: str = ckpt["class"]  # e.g. "solaris.models.fno.FNO"
+        module_path, class_name = dotted.rsplit(".", 1)
+        klass = getattr(importlib.import_module(module_path), class_name)
+        model = klass(**ckpt["init_args"])
+        model.load_state_dict(ckpt["state_dict"])
+        return model
+
+    @classmethod
+    def from_torch(
+        cls,
+        module: nn.Module,
+        meta: ModelMetaData | None = None,
+    ) -> "Module":
+        """Wrap any ``nn.Module`` in a Solaris :class:`Module`.
+
+        The returned wrapper exposes ``.save()``, ``.device``, and
+        ``.num_parameters()`` without altering the wrapped module's behaviour.
+        The inner module is stored as ``wrapper.inner`` and its ``forward``
+        method is delegated directly.
+
+        Parameters
+        ----------
+        module :
+            Any PyTorch module (e.g. a pretrained HuggingFace or torchvision model).
+        meta :
+            Optional metadata.  Defaults to a ``ModelMetaData`` named after the
+            wrapped class.
+        """
+        if meta is None:
+            meta = ModelMetaData(name=type(module).__name__)
+
+        class _Wrapper(cls):  # type: ignore[valid-type]
+            def __init__(self) -> None:
+                super().__init__(meta=meta)
+                self.inner = module
+                # Not serialisable — caller must re-wrap after load
+                self._capture_init_args()
+
+            def forward(self, *args: Any, **kwargs: Any) -> Any:
+                return self.inner(*args, **kwargs)
+
+        wrapper = _Wrapper()
+        return wrapper
 
     def num_parameters(self) -> int:
         """Return total trainable parameter count."""
