@@ -4,6 +4,7 @@
 """Embedding layers for physics-informed and generative models."""
 
 import math
+
 import torch
 import torch.nn as nn
 
@@ -58,7 +59,9 @@ class PositionalEmbedding(nn.Module):
         super().__init__()
         pe = torch.zeros(max_len, embed_dim)
         position = torch.arange(max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, embed_dim, 2, dtype=torch.float) * (-math.log(10000.0) / embed_dim))
+        div_term = torch.exp(
+            torch.arange(0, embed_dim, 2, dtype=torch.float) * (-math.log(10000.0) / embed_dim)
+        )
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
         self.register_buffer("pe", pe.unsqueeze(0))  # (1, max_len, embed_dim)
@@ -95,7 +98,9 @@ class SinusoidalTimestepEmbedding(nn.Module):
         """
         half = self.embed_dim // 2
         freqs = torch.exp(
-            -math.log(self.max_period) * torch.arange(half, dtype=torch.float, device=timesteps.device) / half
+            -math.log(self.max_period)
+            * torch.arange(half, dtype=torch.float, device=timesteps.device)
+            / half
         )
         args = timesteps[:, None].float() * freqs[None]
         return torch.cat([torch.cos(args), torch.sin(args)], dim=-1)

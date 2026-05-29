@@ -3,8 +3,6 @@
 
 """U-Net Neural Operator (UNO) — Ashiqur Rahman et al., 2022."""
 
-from typing import List
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -53,23 +51,23 @@ class UNO(Module):
         super().__init__(meta=self._meta)
 
         # Channel widths per encoder level
-        widths: List[int] = [
-            hidden_channels * (channel_multiplier ** i) for i in range(n_levels)
-        ]
+        widths: list[int] = [hidden_channels * (channel_multiplier**i) for i in range(n_levels)]
 
         self.lift = nn.Conv2d(in_channels, widths[0], 1)
 
         # Encoder: FNO block at each level + strided conv to downsample & expand channels
-        self.encoder_blocks = nn.ModuleList([
-            FNOBlock2d(widths[i], modes, modes) for i in range(n_levels)
-        ])
-        self.downsample = nn.ModuleList([
-            # strided conv simultaneously halves spatial dims and expands channels
-            nn.Conv2d(widths[i], widths[i + 1], kernel_size=2, stride=2)
-            if i < n_levels - 1
-            else nn.Identity()
-            for i in range(n_levels)
-        ])
+        self.encoder_blocks = nn.ModuleList(
+            [FNOBlock2d(widths[i], modes, modes) for i in range(n_levels)]
+        )
+        self.downsample = nn.ModuleList(
+            [
+                # strided conv simultaneously halves spatial dims and expands channels
+                nn.Conv2d(widths[i], widths[i + 1], kernel_size=2, stride=2)
+                if i < n_levels - 1
+                else nn.Identity()
+                for i in range(n_levels)
+            ]
+        )
 
         # Bottleneck
         bottleneck_w = widths[-1] * channel_multiplier
@@ -130,13 +128,13 @@ class UNO(Module):
         x = self.lift(x)
 
         # Encoder — collect skip features before downsampling
-        skips: List[torch.Tensor] = []
+        skips: list[torch.Tensor] = []
         for enc, down in zip(self.encoder_blocks, self.downsample):
             x = enc(x)
-            skips.append(x)       # skip has widths[i] channels
-            x = down(x)           # x now has widths[i+1] channels (or same at last level)
+            skips.append(x)  # skip has widths[i] channels
+            x = down(x)  # x now has widths[i+1] channels (or same at last level)
 
-        x = self.bottleneck(x)    # x has widths[-1] channels
+        x = self.bottleneck(x)  # x has widths[-1] channels
 
         # Decoder — iterate over levels from deepest to shallowest
         for skip_conv, dec, up, skip in zip(

@@ -44,7 +44,6 @@ Usage
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -73,7 +72,7 @@ class DPRolloutPolicy:
         self.error_max = error_max
 
         # Thresholds (one per budget bin) — populated by fit()
-        self._thresholds: Optional[np.ndarray] = None
+        self._thresholds: np.ndarray | None = None
         self._fitted = False
 
         # Fallback threshold used before fit() is called (conservative: always solve)
@@ -81,7 +80,7 @@ class DPRolloutPolicy:
 
     # ── Fitting (offline DP) ─────────────────────────────────────────────────
 
-    def fit(self, profile_data: List[Tuple[float, float, float]]) -> "DPRolloutPolicy":
+    def fit(self, profile_data: list[tuple[float, float, float]]) -> DPRolloutPolicy:
         """Fit the DP policy from profiled (E, rel_l2_with_solver, rel_l2_without_solver) triples.
 
         The DP value function per budget bin is:
@@ -100,15 +99,13 @@ class DPRolloutPolicy:
             return self
 
         errors = np.array([d[0] for d in profile_data])
-        l2_with    = np.array([d[1] for d in profile_data])
+        l2_with = np.array([d[1] for d in profile_data])
         l2_without = np.array([d[2] for d in profile_data])
-        gain = l2_without - l2_with   # positive → solver helps
+        gain = l2_without - l2_with  # positive → solver helps
 
         # Bin by error level
         bins = np.linspace(0.0, self.error_max, self.n_error_bins + 1)
-        bin_idx = np.clip(
-            np.digitize(errors, bins) - 1, 0, self.n_error_bins - 1
-        )
+        bin_idx = np.clip(np.digitize(errors, bins) - 1, 0, self.n_error_bins - 1)
         bin_gain = np.zeros(self.n_error_bins)
         bin_count = np.zeros(self.n_error_bins, dtype=int)
         for i, g in zip(bin_idx, gain):
@@ -139,7 +136,7 @@ class DPRolloutPolicy:
         val_loader,
         device,
         n_samples: int = 200,
-    ) -> "DPRolloutPolicy":
+    ) -> DPRolloutPolicy:
         """Auto-fit by running diagnostics on the trained residual corrector.
 
         Compares:
@@ -154,13 +151,15 @@ class DPRolloutPolicy:
         n_samples : int
             Maximum validation samples to profile.
         """
-        import torch
         import sys
         from pathlib import Path as P
+
+        import torch
+
         sys.path.insert(0, str(P(__file__).parent.parent.parent))
         from solaris.metrics import relative_l2_error
 
-        profile: List[Tuple[float, float, float]] = []
+        profile: list[tuple[float, float, float]] = []
         model.eval()
         seen = 0
 
@@ -211,9 +210,7 @@ class DPRolloutPolicy:
             return True
 
         budget_frac = min(1.0, samples_remaining / max(1, total_samples))
-        budget_bin = min(
-            int(budget_frac * self.n_budget_bins), self.n_budget_bins - 1
-        )
+        budget_bin = min(int(budget_frac * self.n_budget_bins), self.n_budget_bins - 1)
         threshold = self._thresholds[budget_bin]
         return float(relative_correction) > float(threshold)
 
@@ -233,7 +230,7 @@ class DPRolloutPolicy:
         )
 
     @classmethod
-    def load(cls, path: str | Path) -> "DPRolloutPolicy":
+    def load(cls, path: str | Path) -> DPRolloutPolicy:
         """Load a saved policy table."""
         d = np.load(path)
         policy = cls(

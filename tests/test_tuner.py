@@ -9,6 +9,7 @@ from solaris.utils.tuner import HyperparameterTuner
 def test_tuner_raises_without_optuna(monkeypatch):
     """HyperparameterTuner raises ImportError when optuna is not installed."""
     import builtins
+
     real_import = builtins.__import__
 
     def mock_import(name, *args, **kwargs):

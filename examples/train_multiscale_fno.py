@@ -21,8 +21,8 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from solaris.models import FNO, MultiScaleFNO
 from solaris.metrics import relative_l2_error
+from solaris.models import FNO, MultiScaleFNO
 from solaris.utils import get_logger
 
 
@@ -82,16 +82,22 @@ def train(args):
 
     # ── MultiScaleFNO ──
     ms_model = MultiScaleFNO(
-        in_channels=1, out_channels=1,
-        hidden_channels=args.hidden, n_layers=args.n_layers,
-        n_scales=3, max_modes=args.modes,
+        in_channels=1,
+        out_channels=1,
+        hidden_channels=args.hidden,
+        n_layers=args.n_layers,
+        n_scales=3,
+        max_modes=args.modes,
     ).to(device)
 
     # ── Baseline FNO ──
     fno = FNO(
-        in_channels=1, out_channels=1,
-        hidden_channels=args.hidden, n_layers=args.n_layers,
-        modes=args.modes, dim=2,
+        in_channels=1,
+        out_channels=1,
+        hidden_channels=args.hidden,
+        n_layers=args.n_layers,
+        modes=args.modes,
+        dim=2,
     ).to(device)
 
     log.info(f"MultiScaleFNO params: {ms_model.num_parameters():,}")
@@ -106,7 +112,8 @@ def train(args):
             for x, y in train_dl:
                 x, y = x.to(device), y.to(device)
                 loss = nn.functional.mse_loss(model(x), y)
-                opt.zero_grad(); loss.backward()
+                opt.zero_grad()
+                loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 opt.step()
             sch.step()

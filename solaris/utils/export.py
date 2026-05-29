@@ -5,7 +5,6 @@
 
 import warnings
 from pathlib import Path
-from typing import Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -13,8 +12,8 @@ import torch.nn as nn
 
 def export_onnx(
     model: nn.Module,
-    dummy_input: Union[torch.Tensor, Tuple[torch.Tensor, ...]],
-    path: Union[str, Path],
+    dummy_input: torch.Tensor | tuple[torch.Tensor, ...],
+    path: str | Path,
     opset_version: int = 17,
     rtol: float = 1e-3,
     atol: float = 1e-5,
@@ -39,8 +38,7 @@ def export_onnx(
         import onnx  # noqa: PLC0415
     except ImportError as e:
         raise ImportError(
-            "onnx is required for ONNX export. "
-            "Install it with: pip install 'solaris-rocm[export]'"
+            "onnx is required for ONNX export. Install it with: pip install 'solaris-rocm[export]'"
         ) from e
 
     path = Path(path)
@@ -57,9 +55,8 @@ def export_onnx(
             opset_version=opset_version,
             input_names=[f"input_{i}" for i in range(len(inputs))],
             output_names=["output"],
-            dynamic_axes={
-                f"input_{i}": {0: "batch"} for i in range(len(inputs))
-            } | {"output": {0: "batch"}},
+            dynamic_axes={f"input_{i}": {0: "batch"} for i in range(len(inputs))}
+            | {"output": {0: "batch"}},
         )
 
     # Validate the exported model
@@ -68,14 +65,11 @@ def export_onnx(
 
     # Optional onnxruntime validation
     try:
-        import onnxruntime as ort  # noqa: PLC0415
         import numpy as np  # noqa: PLC0415
+        import onnxruntime as ort  # noqa: PLC0415
 
         session = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
-        feed = {
-            f"input_{i}": inp.cpu().numpy()
-            for i, inp in enumerate(inputs)
-        }
+        feed = {f"input_{i}": inp.cpu().numpy() for i, inp in enumerate(inputs)}
         ort_out = session.run(None, feed)[0]
 
         with torch.no_grad():

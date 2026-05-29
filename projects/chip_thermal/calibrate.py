@@ -46,19 +46,27 @@ import torch
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from solaris.models.conformal import ConformalNeuralOperator
-from solaris.models.fno import FNO
-from solaris.models.constrained_fno import ConstrainedFNO
-from solaris.models.residual_corrector import NeuralResidualCorrector
-from solaris.utils import get_logger
 from solver import chip_floorplan_power_map, solve_heat_fd
 from train import make_coarse_solver
 
+from solaris.models.conformal import ConformalNeuralOperator
+from solaris.models.constrained_fno import ConstrainedFNO
+from solaris.models.fno import FNO
+from solaris.models.residual_corrector import NeuralResidualCorrector
+from solaris.utils import get_logger
 
 # ─── Model loading ───────────────────────────────────────────────────────────
 
-def load_model(ckpt_path: Path, model_type: str, device: torch.device,
-               Q_mean: float, Q_std: float, T_mean: float, T_std: float):
+
+def load_model(
+    ckpt_path: Path,
+    model_type: str,
+    device: torch.device,
+    Q_mean: float,
+    Q_std: float,
+    T_mean: float,
+    T_std: float,
+):
     """Reconstruct model from checkpoint and load weights."""
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
     hidden = ckpt.get("hidden_channels", 64)
@@ -66,16 +74,34 @@ def load_model(ckpt_path: Path, model_type: str, device: torch.device,
     modes = ckpt.get("modes", 16)
 
     if model_type == "fno":
-        model = FNO(in_channels=1, out_channels=1, hidden_channels=hidden,
-                    n_layers=n_layers, modes=modes, dim=2)
+        model = FNO(
+            in_channels=1,
+            out_channels=1,
+            hidden_channels=hidden,
+            n_layers=n_layers,
+            modes=modes,
+            dim=2,
+        )
     elif model_type == "constrained":
-        model = ConstrainedFNO(in_channels=1, out_channels=1, hidden_channels=hidden,
-                               n_layers=n_layers, modes=modes, constraint="conservative")
+        model = ConstrainedFNO(
+            in_channels=1,
+            out_channels=1,
+            hidden_channels=hidden,
+            n_layers=n_layers,
+            modes=modes,
+            constraint="conservative",
+        )
     elif model_type == "residual":
         coarse_solver = make_coarse_solver(Q_mean, Q_std, T_mean, T_std, coarse_factor=4)
         model = NeuralResidualCorrector(
-            solver=coarse_solver, in_channels=1, out_channels=1, solver_out_channels=1,
-            hidden_channels=hidden, n_layers=n_layers, modes=modes, solver_detach=True,
+            solver=coarse_solver,
+            in_channels=1,
+            out_channels=1,
+            solver_out_channels=1,
+            hidden_channels=hidden,
+            n_layers=n_layers,
+            modes=modes,
+            solver_detach=True,
         )
     else:
         raise ValueError(f"Unknown model_type: {model_type!r}")
@@ -86,6 +112,7 @@ def load_model(ckpt_path: Path, model_type: str, device: torch.device,
 
 
 # ─── DP calibration subset selection ─────────────────────────────────────────
+
 
 def dp_select_calibration_set(
     conformity_scores: np.ndarray,
@@ -136,6 +163,7 @@ def dp_select_calibration_set(
 
 # ─── Main calibration ─────────────────────────────────────────────────────────
 
+
 def calibrate(args):
     log = get_logger("calibrate")
     device = torch.device(
@@ -150,8 +178,7 @@ def calibrate(args):
     T_mean, T_std = float(stats["T_mean"]), float(stats["T_std"])
 
     # ── Load model ──
-    model = load_model(Path(args.checkpoint), args.model, device,
-                       Q_mean, Q_std, T_mean, T_std)
+    model = load_model(Path(args.checkpoint), args.model, device, Q_mean, Q_std, T_mean, T_std)
     log.info(f"Loaded {args.model} model  |  params: {model.num_parameters():,}")
 
     # ── Generate calibration pool (N_pool new chip layouts) ──
@@ -173,12 +200,12 @@ def calibrate(args):
     model.eval()
     with torch.no_grad():
         for i in range(0, len(Q_t), 32):
-            Q_b = Q_t[i:i+32].to(device)
-            T_b = T_t[i:i+32].to(device)
+            Q_b = Q_t[i : i + 32].to(device)
+            T_b = T_t[i : i + 32].to(device)
             pred = model(Q_b)
             score = (pred - T_b).abs().flatten(1).max(dim=1).values
             scores_all.append(score.cpu().numpy())
-    scores_np = np.concatenate(scores_all)   # (pool_size,)
+    scores_np = np.concatenate(scores_all)  # (pool_size,)
 
     # ── DP subset selection ──
     selected = dp_select_calibration_set(scores_np, target_size=args.cal_size)
@@ -196,7 +223,9 @@ def calibrate(args):
         alpha=args.alpha,
         batch_size=32,
     )
-    log.info(f"Calibrated q̂ = {q_hat:.4f}  (α={args.alpha}, coverage target ≥ {1-args.alpha:.0%})")
+    log.info(
+        f"Calibrated q̂ = {q_hat:.4f}  (α={args.alpha}, coverage target ≥ {1 - args.alpha:.0%})"
+    )
 
     # ── Coverage report on held-out test samples ──
     log.info(f"Generating {args.test_size} test layouts for coverage verification …")
@@ -213,7 +242,7 @@ def calibrate(args):
     log.info("=" * 60)
     log.info(f"  Model              : {args.model}")
     log.info(f"  Calibration set    : {len(selected)} samples (DP-selected from {args.pool_size})")
-    log.info(f"  Coverage target    : ≥ {1-args.alpha:.0%}  (α={args.alpha})")
+    log.info(f"  Coverage target    : ≥ {1 - args.alpha:.0%}  (α={args.alpha})")
     log.info(f"  Empirical coverage : {report['coverage']:.1%}")
     log.info(f"  Interval width     : {report['mean_interval_width']:.4f} (normalised)")
     log.info(f"  Interval width     : {report['mean_interval_width'] * T_std:.2f} °C")
@@ -230,7 +259,9 @@ def calibrate(args):
             "cal_indices": selected,
             "coverage": report["coverage"],
             "model_type": args.model,
-            "hidden_channels": torch.load(args.checkpoint, weights_only=False).get("hidden_channels", 64),
+            "hidden_channels": torch.load(args.checkpoint, weights_only=False).get(
+                "hidden_channels", 64
+            ),
             "n_layers": torch.load(args.checkpoint, weights_only=False).get("n_layers", 4),
             "modes": torch.load(args.checkpoint, weights_only=False).get("modes", 16),
             "resolution": args.resolution,
@@ -248,11 +279,12 @@ def calibrate(args):
 
 def _visualise(conformal, Q_t, T_true_t, T_std, T_mean, args):
     import matplotlib.pyplot as plt
+
     lo, hi, pt = conformal.predict(Q_t)
-    lo_c  = (lo[0, 0].cpu().numpy()  * T_std + T_mean)
-    hi_c  = (hi[0, 0].cpu().numpy()  * T_std + T_mean)
-    pt_c  = (pt[0, 0].cpu().numpy()  * T_std + T_mean)
-    tru_c = (T_true_t[0, 0].cpu().numpy() * T_std + T_mean)
+    lo_c = lo[0, 0].cpu().numpy() * T_std + T_mean
+    hi_c = hi[0, 0].cpu().numpy() * T_std + T_mean
+    pt_c = pt[0, 0].cpu().numpy() * T_std + T_mean
+    tru_c = T_true_t[0, 0].cpu().numpy() * T_std + T_mean
     width = hi_c - lo_c
 
     vmin, vmax = tru_c.min(), tru_c.max()
@@ -261,10 +293,16 @@ def _visualise(conformal, Q_t, T_true_t, T_std, T_mean, args):
     fig.subplots_adjust(wspace=0.38, left=0.04, right=0.97, top=0.82, bottom=0.06)
 
     panels = [
-        (tru_c,  "inferno", vmin, vmax, "Ground Truth T [°C]"),
-        (pt_c,   "inferno", vmin, vmax, f"Predicted T [°C]"),
+        (tru_c, "inferno", vmin, vmax, "Ground Truth T [°C]"),
+        (pt_c, "inferno", vmin, vmax, "Predicted T [°C]"),
         (np.abs(pt_c - tru_c), "RdBu_r", None, None, "|Error| [°C]"),
-        (width,  "viridis", None, None, f"Interval Width [°C]\n(α={args.alpha}, ≥{1-args.alpha:.0%} coverage)"),
+        (
+            width,
+            "viridis",
+            None,
+            None,
+            f"Interval Width [°C]\n(α={args.alpha}, ≥{1 - args.alpha:.0%} coverage)",
+        ),
     ]
     for ax, (data, cmap, vlo, vhi, title) in zip(axes, panels):
         kw = dict(cmap=cmap, origin="lower", interpolation="bilinear")
@@ -275,7 +313,8 @@ def _visualise(conformal, Q_t, T_true_t, T_std, T_mean, args):
         cb = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
         cb.ax.yaxis.set_tick_params(color="white", labelcolor="white")
         cb.outline.set_edgecolor("white")
-        ax.set_xticks([]); ax.set_yticks([])
+        ax.set_xticks([])
+        ax.set_yticks([])
         for spine in ax.spines.values():
             spine.set_edgecolor("#444444")
         ax.set_facecolor("#0d0d0d")
@@ -283,13 +322,17 @@ def _visualise(conformal, Q_t, T_true_t, T_std, T_mean, args):
     fig.suptitle(
         f"Conformal UQ — {args.model} model  ·  "
         f"q̂ = {conformal._q_hat.item():.4f}  ·  α = {args.alpha}",
-        fontsize=12, fontweight="bold", color="white", y=0.97,
+        fontsize=12,
+        fontweight="bold",
+        color="white",
+        y=0.97,
     )
     out = Path(args.checkpoint).parent.parent / "results" / f"calibrate_{args.model}.png"
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, dpi=140, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
     import logging
+
     logging.getLogger("calibrate").info(f"Calibration figure → {out}")
 
 
@@ -297,21 +340,30 @@ def _visualise(conformal, Q_t, T_true_t, T_std, T_mean, args):
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
-    p.add_argument("--model",       default="fno",
-                   choices=["fno", "constrained", "residual"])
-    p.add_argument("--checkpoint",  default=None,
-                   help="Checkpoint path (defaults to checkpoints/best_{model}.pt)")
-    p.add_argument("--device",      default="cuda")
-    p.add_argument("--resolution",  type=int,   default=128)
-    p.add_argument("--pool_size",   type=int,   default=500,
-                   help="Size of calibration pool to generate")
-    p.add_argument("--cal_size",    type=int,   default=150,
-                   help="Target calibration set size after DP selection")
-    p.add_argument("--test_size",   type=int,   default=200,
-                   help="Number of test samples for coverage verification")
-    p.add_argument("--alpha",       type=float, default=0.1,
-                   help="Miscoverage rate (0.1 → 90%% coverage guarantee)")
-    p.add_argument("--seed",        type=int,   default=7777)
+    p.add_argument("--model", default="fno", choices=["fno", "constrained", "residual"])
+    p.add_argument(
+        "--checkpoint",
+        default=None,
+        help="Checkpoint path (defaults to checkpoints/best_{model}.pt)",
+    )
+    p.add_argument("--device", default="cuda")
+    p.add_argument("--resolution", type=int, default=128)
+    p.add_argument(
+        "--pool_size", type=int, default=500, help="Size of calibration pool to generate"
+    )
+    p.add_argument(
+        "--cal_size", type=int, default=150, help="Target calibration set size after DP selection"
+    )
+    p.add_argument(
+        "--test_size",
+        type=int,
+        default=200,
+        help="Number of test samples for coverage verification",
+    )
+    p.add_argument(
+        "--alpha", type=float, default=0.1, help="Miscoverage rate (0.1 → 90%% coverage guarantee)"
+    )
+    p.add_argument("--seed", type=int, default=7777)
     args = p.parse_args()
 
     if args.checkpoint is None:

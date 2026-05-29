@@ -1,5 +1,6 @@
 import torch
-from solaris.metrics import relative_l2_error, rmse, nrmse, r2_score
+
+from solaris.metrics import r2_score, relative_l2_error, rmse
 
 
 def test_perfect_prediction():

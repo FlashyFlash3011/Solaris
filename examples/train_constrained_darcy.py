@@ -22,8 +22,8 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
 import solaris
-from solaris.models import ConstrainedFNO, FNO
 from solaris.metrics import relative_l2_error
+from solaris.models import FNO, ConstrainedFNO
 from solaris.utils import get_logger
 
 
@@ -57,7 +57,7 @@ def check_conservation(model, loader, device):
             pred = model(x)
             src_int = x[:, 0].sum(dim=[-2, -1])
             out_int = pred[:, 0].sum(dim=[-2, -1])
-            rel_err = ((src_int - out_int).abs() / (src_int.abs() + 1e-8))
+            rel_err = (src_int - out_int).abs() / (src_int.abs() + 1e-8)
             violations.append(rel_err.cpu())
     return torch.cat(violations).mean().item()
 
@@ -84,16 +84,22 @@ def train(args):
 
     # ── Constrained FNO (conservation constraint) ──
     cmodel = ConstrainedFNO(
-        in_channels=1, out_channels=1,
-        hidden_channels=args.hidden, n_layers=args.n_layers,
-        modes=args.modes, constraint="conservative",
+        in_channels=1,
+        out_channels=1,
+        hidden_channels=args.hidden,
+        n_layers=args.n_layers,
+        modes=args.modes,
+        constraint="conservative",
     ).to(device)
 
     # ── Baseline FNO (no constraint) ──
     baseline = FNO(
-        in_channels=1, out_channels=1,
-        hidden_channels=args.hidden, n_layers=args.n_layers,
-        modes=args.modes, dim=2,
+        in_channels=1,
+        out_channels=1,
+        hidden_channels=args.hidden,
+        n_layers=args.n_layers,
+        modes=args.modes,
+        dim=2,
     ).to(device)
 
     log.info(f"ConstrainedFNO params: {cmodel.num_parameters():,}")
@@ -124,9 +130,11 @@ def train(args):
     sch_c = torch.optim.lr_scheduler.CosineAnnealingLR(opt_c, T_max=args.epochs)
     sch_b = torch.optim.lr_scheduler.CosineAnnealingLR(opt_b, T_max=args.epochs)
 
-    log.info("\n{:<6} {:>10} {:>10} {:>12} {:>12}".format(
-        "Epoch", "Cstr-L2", "Base-L2", "Cstr-Viol", "Base-Viol"
-    ))
+    log.info(
+        "\n{:<6} {:>10} {:>10} {:>12} {:>12}".format(
+            "Epoch", "Cstr-L2", "Base-L2", "Cstr-Viol", "Base-Viol"
+        )
+    )
     log.info("-" * 56)
 
     for ep in range(1, args.epochs + 1):

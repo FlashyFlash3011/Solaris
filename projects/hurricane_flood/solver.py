@@ -31,16 +31,15 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from scipy.ndimage import gaussian_filter  # type: ignore
 
 # Physical constants
-G = 9.81          # gravitational acceleration [m/s²]
-RHO_W = 1025.0    # seawater density [kg/m³]
-RHO_A = 1.225     # air density [kg/m³]
-C_D = 1.5e-3      # bulk drag coefficient (dimensionless)
+G = 9.81  # gravitational acceleration [m/s²]
+RHO_W = 1025.0  # seawater density [kg/m³]
+RHO_A = 1.225  # air density [kg/m³]
+C_D = 1.5e-3  # bulk drag coefficient (dimensionless)
 R_FRICTION = 5e-5  # linear bottom friction [1/s]
 
 
@@ -48,11 +47,12 @@ R_FRICTION = 5e-5  # linear bottom friction [1/s]
 # Bathymetry generator
 # ---------------------------------------------------------------------------
 
+
 def random_coastal_bathymetry(
     H: int = 64,
     W: int = 64,
     dx: float = 1000.0,
-    rng: Optional[np.random.Generator] = None,
+    rng: np.random.Generator | None = None,
 ) -> np.ndarray:
     """Generate a synthetic coastal bathymetry field.
 
@@ -95,15 +95,16 @@ def random_coastal_bathymetry(
 # Hurricane wind field
 # ---------------------------------------------------------------------------
 
+
 def gaussian_hurricane_wind(
     H: int,
     W: int,
     dx: float,
     t_hours: float,
-    track: List[Tuple[float, float]],
+    track: list[tuple[float, float]],
     radius_km: float = 80.0,
     max_wind_ms: float = 55.0,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Rankine vortex wind field interpolated along the storm track.
 
     Returns
@@ -126,7 +127,7 @@ def gaussian_hurricane_wind(
 
     dx_g = XX - cx
     dy_g = YY - cy
-    r_km = np.sqrt(dx_g ** 2 + dy_g ** 2) / 1e3 + 1e-6
+    r_km = np.sqrt(dx_g**2 + dy_g**2) / 1e3 + 1e-6
 
     # Rankine vortex profile (solid-body inside eye wall, power-law outside)
     r_max = radius_km
@@ -140,13 +141,14 @@ def gaussian_hurricane_wind(
     theta = np.arctan2(dy_g, dx_g)
     inflow = np.deg2rad(20.0)
     wind_u = -v_tang * np.sin(theta + inflow)
-    wind_v =  v_tang * np.cos(theta + inflow)
+    wind_v = v_tang * np.cos(theta + inflow)
     return wind_u.astype(np.float32), wind_v.astype(np.float32)
 
 
 # ---------------------------------------------------------------------------
 # Shallow Water Solver
 # ---------------------------------------------------------------------------
+
 
 class ShallowWaterSolver:
     """Adams-Bashforth 2 solver for linearised storm surge SWE.
@@ -188,15 +190,15 @@ class ShallowWaterSolver:
 
         # State (sea-surface elevation anomaly, velocities)
         self.eta = np.zeros((H, W), dtype=np.float64)
-        self.u   = np.zeros((H, W), dtype=np.float64)
-        self.v   = np.zeros((H, W), dtype=np.float64)
+        self.u = np.zeros((H, W), dtype=np.float64)
+        self.v = np.zeros((H, W), dtype=np.float64)
         # Previous tendencies for AB2
         self._deta_prev = np.zeros((H, W), dtype=np.float64)
-        self._du_prev   = np.zeros((H, W), dtype=np.float64)
-        self._dv_prev   = np.zeros((H, W), dtype=np.float64)
+        self._du_prev = np.zeros((H, W), dtype=np.float64)
+        self._dv_prev = np.zeros((H, W), dtype=np.float64)
 
-        self.bathy  = np.zeros((H, W), dtype=np.float32)
-        self.H0     = np.ones((H, W), dtype=np.float64)   # background depth
+        self.bathy = np.zeros((H, W), dtype=np.float32)
+        self.H0 = np.ones((H, W), dtype=np.float64)  # background depth
         self.land_mask = np.zeros((H, W), dtype=bool)
 
     def set_bathymetry(self, bathy: np.ndarray) -> None:
@@ -210,17 +212,17 @@ class ShallowWaterSolver:
         self.bathy = bathy.astype(np.float32)
         # Background depth: undisturbed water depth (0 on land)
         self.H0 = np.maximum(0.5, -bathy.astype(np.float64))
-        self.H0[bathy >= 0] = 0.5   # minimal depth over land for numerics
+        self.H0[bathy >= 0] = 0.5  # minimal depth over land for numerics
         self.land_mask = bathy >= 0.0
 
     def reset(self) -> None:
         """Reset all state to zero (calm ocean at rest)."""
         self.eta[:] = 0.0
-        self.u[:]   = 0.0
-        self.v[:]   = 0.0
+        self.u[:] = 0.0
+        self.v[:] = 0.0
         self._deta_prev[:] = 0.0
-        self._du_prev[:]   = 0.0
-        self._dv_prev[:]   = 0.0
+        self._du_prev[:] = 0.0
+        self._dv_prev[:] = 0.0
         self._step_count = 0
 
     def step(
@@ -241,7 +243,7 @@ class ShallowWaterSolver:
         wv = wind_v.astype(np.float64)
 
         # Wind stress via bulk formula
-        wspd = np.sqrt(wu ** 2 + wv ** 2)
+        wspd = np.sqrt(wu**2 + wv**2)
         tau_x = RHO_A * C_D * wspd * wu
         tau_y = RHO_A * C_D * wspd * wv
 
@@ -256,16 +258,16 @@ class ShallowWaterSolver:
         """∂f/∂x via centered differences, shape (H, W)."""
         df = np.zeros_like(f)
         df[:, 1:-1] = (f[:, 2:] - f[:, :-2]) / (2 * self.dx)
-        df[:, 0]    = (f[:, 1] - f[:, 0]) / self.dx
-        df[:, -1]   = (f[:, -1] - f[:, -2]) / self.dx
+        df[:, 0] = (f[:, 1] - f[:, 0]) / self.dx
+        df[:, -1] = (f[:, -1] - f[:, -2]) / self.dx
         return df
 
     def _central_diff_y(self, f: np.ndarray) -> np.ndarray:
         """∂f/∂y via centered differences, shape (H, W)."""
         df = np.zeros_like(f)
         df[1:-1, :] = (f[2:, :] - f[:-2, :]) / (2 * self.dx)
-        df[0, :]    = (f[1, :] - f[0, :]) / self.dx
-        df[-1, :]   = (f[-1, :] - f[-2, :]) / self.dx
+        df[0, :] = (f[1, :] - f[0, :]) / self.dx
+        df[-1, :] = (f[-1, :] - f[-2, :]) / self.dx
         return df
 
     def _tendencies(
@@ -275,10 +277,10 @@ class ShallowWaterSolver:
         v: np.ndarray,
         tau_x: np.ndarray,
         tau_y: np.ndarray,
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         deta = -self.H0 * (self._central_diff_x(u) + self._central_diff_y(v))
-        du   = -self.g * self._central_diff_x(eta) + tau_x / (RHO_W * self.H0) - R_FRICTION * u
-        dv   = -self.g * self._central_diff_y(eta) + tau_y / (RHO_W * self.H0) - R_FRICTION * v
+        du = -self.g * self._central_diff_x(eta) + tau_x / (RHO_W * self.H0) - R_FRICTION * u
+        dv = -self.g * self._central_diff_y(eta) + tau_y / (RHO_W * self.H0) - R_FRICTION * v
         return deta, du, dv
 
     def _ab2_step(self, tau_x: np.ndarray, tau_y: np.ndarray) -> None:
@@ -288,26 +290,28 @@ class ShallowWaterSolver:
         if self._step_count == 0:
             # Euler on the first step
             self.eta += self.dt * deta
-            self.u   += self.dt * du
-            self.v   += self.dt * dv
+            self.u += self.dt * du
+            self.v += self.dt * dv
         else:
             # AB2: y_{n+1} = y_n + dt * (3/2 * f_n - 1/2 * f_{n-1})
             self.eta += self.dt * (1.5 * deta - 0.5 * self._deta_prev)
-            self.u   += self.dt * (1.5 * du   - 0.5 * self._du_prev)
-            self.v   += self.dt * (1.5 * dv   - 0.5 * self._dv_prev)
+            self.u += self.dt * (1.5 * du - 0.5 * self._du_prev)
+            self.v += self.dt * (1.5 * dv - 0.5 * self._dv_prev)
 
         self._deta_prev[:] = deta
-        self._du_prev[:]   = du
-        self._dv_prev[:]   = dv
+        self._du_prev[:] = du
+        self._dv_prev[:] = dv
 
     def _apply_boundaries(self) -> None:
         """No-flux walls on N/E/W; radiation on S."""
-        self.u[:, 0]  = 0.0
+        self.u[:, 0] = 0.0
         self.u[:, -1] = 0.0
         self.v[-1, :] = 0.0
         # South: Sommerfeld radiation
         c = np.sqrt(self.g * np.maximum(self.H0[1, :], 0.5))
-        self.eta[0, :] = self.eta[1, :] - (self.dt * c / self.dx) * (self.eta[1, :] - self.eta[2, :])
+        self.eta[0, :] = self.eta[1, :] - (self.dt * c / self.dx) * (
+            self.eta[1, :] - self.eta[2, :]
+        )
 
     def _shapiro_smooth(self) -> None:
         """Apply a mild 1-2-1 Shapiro filter to η to suppress 2Δx noise."""
@@ -340,9 +344,10 @@ class ShallowWaterSolver:
 # High-level simulation runner
 # ---------------------------------------------------------------------------
 
+
 def run_hurricane_simulation(
     bathy: np.ndarray,
-    track: List[Tuple[float, float]],
+    track: list[tuple[float, float]],
     n_hours: int = 24,
     steps_per_hour: int = 180,
     n_snapshots: int = 25,
@@ -350,7 +355,7 @@ def run_hurricane_simulation(
     dt: float = 20.0,
     max_wind_ms: float = 55.0,
     radius_km: float = 80.0,
-) -> Dict:
+) -> dict:
     """Run a full hurricane storm surge simulation and return snapshots.
 
     Returns
@@ -403,12 +408,12 @@ def run_hurricane_simulation(
         times.append(times[-1])
 
     return {
-        "eta":    np.stack(eta_snaps[:n_snapshots]),
-        "flood":  np.stack(flood_snaps[:n_snapshots]),
+        "eta": np.stack(eta_snaps[:n_snapshots]),
+        "flood": np.stack(flood_snaps[:n_snapshots]),
         "wind_u": np.stack(wu_snaps[:n_snapshots]),
         "wind_v": np.stack(wv_snaps[:n_snapshots]),
-        "bathy":  bathy,
-        "track":  track,
+        "bathy": bathy,
+        "track": track,
         "times_h": times[:n_snapshots],
     }
 
@@ -417,13 +422,14 @@ def run_hurricane_simulation(
 # Track generator
 # ---------------------------------------------------------------------------
 
+
 def random_hurricane_track(
     H: int = 64,
     W: int = 64,
     dx: float = 1000.0,
     n_hours: int = 24,
-    rng: Optional[np.random.Generator] = None,
-) -> List[Tuple[float, float]]:
+    rng: np.random.Generator | None = None,
+) -> list[tuple[float, float]]:
     """Generate a random northward-moving hurricane track.
 
     Returns list of (x_km, y_km) at each integer hour 0..n_hours.
@@ -451,6 +457,7 @@ def random_hurricane_track(
 
 if __name__ == "__main__":
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
@@ -477,10 +484,11 @@ if __name__ == "__main__":
     for col, si in enumerate(snap_ids):
         t_h = result["times_h"][si]
         ax_flood = axes[0, col]
-        ax_wind  = axes[1, col]
+        ax_wind = axes[1, col]
 
-        im = ax_flood.imshow(result["flood"][si], origin="lower", cmap="Blues",
-                             vmin=0, vmax=max(max_flood, 0.1))
+        im = ax_flood.imshow(
+            result["flood"][si], origin="lower", cmap="Blues", vmin=0, vmax=max(max_flood, 0.1)
+        )
         ax_flood.contour(bathy, levels=[0], colors="peru", linewidths=1.0)
         ax_flood.set_title(f"Flood [m]\nt={t_h:.1f}h", fontsize=8)
         ax_flood.axis("off")
@@ -490,10 +498,15 @@ if __name__ == "__main__":
         im2 = ax_wind.imshow(wspd, origin="lower", cmap="YlOrRd", vmin=0, vmax=65)
         step = 8
         ys2, xs2 = np.mgrid[0:H:step, 0:W:step]
-        ax_wind.quiver(xs2, ys2,
-                       result["wind_u"][si][::step, ::step],
-                       result["wind_v"][si][::step, ::step],
-                       scale=500, width=0.005, color="white")
+        ax_wind.quiver(
+            xs2,
+            ys2,
+            result["wind_u"][si][::step, ::step],
+            result["wind_v"][si][::step, ::step],
+            scale=500,
+            width=0.005,
+            color="white",
+        )
         ax_wind.set_title(f"Wind [m/s]\nt={t_h:.1f}h", fontsize=8)
         ax_wind.axis("off")
         plt.colorbar(im2, ax=ax_wind, fraction=0.046)

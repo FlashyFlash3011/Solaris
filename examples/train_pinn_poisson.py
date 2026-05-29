@@ -12,6 +12,7 @@ Run:
 """
 
 import argparse
+
 import torch
 import torch.nn as nn
 
@@ -49,10 +50,14 @@ def main():
     args = parser.parse_args()
 
     log = get_logger("pinn_poisson")
-    device = torch.device(args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu")
+    device = torch.device(
+        args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu"
+    )
     log.info(f"Device: {device}")
 
-    model = FullyConnected(in_features=2, out_features=1, hidden_features=64, n_layers=5, activation="tanh")
+    model = FullyConnected(
+        in_features=2, out_features=1, hidden_features=64, n_layers=5, activation="tanh"
+    )
     model = model.to(device)
     log.info(f"Model parameters: {model.num_parameters():,}")
 
@@ -71,12 +76,14 @@ def main():
         t = torch.rand(args.n_boundary, 1, device=device)
         zeros = torch.zeros_like(t)
         ones = torch.ones_like(t)
-        xy_b = torch.cat([
-            torch.cat([t, zeros], dim=1),  # bottom
-            torch.cat([t, ones], dim=1),   # top
-            torch.cat([zeros, t], dim=1),  # left
-            torch.cat([ones, t], dim=1),   # right
-        ])
+        xy_b = torch.cat(
+            [
+                torch.cat([t, zeros], dim=1),  # bottom
+                torch.cat([t, ones], dim=1),  # top
+                torch.cat([zeros, t], dim=1),  # left
+                torch.cat([ones, t], dim=1),  # right
+            ]
+        )
         loss_bc = (model(xy_b) ** 2).mean()
 
         loss = loss_pde + 10.0 * loss_bc
@@ -92,8 +99,11 @@ def main():
                 xy_test = torch.stack([xx.flatten(), yy.flatten()], dim=1)
                 u_pred = model(xy_test).squeeze(-1)
                 u_ref = exact_u(xy_test[:, 0], xy_test[:, 1])
-                l2_err = ((u_pred - u_ref)**2).mean().sqrt().item()
-            log.info(f"Epoch {epoch:5d} | PDE loss={loss_pde.item():.3e} | BC loss={loss_bc.item():.3e} | L2 error={l2_err:.4f}")
+                l2_err = ((u_pred - u_ref) ** 2).mean().sqrt().item()
+            log.info(
+                f"Epoch {epoch:5d} | PDE loss={loss_pde.item():.3e}"
+                f" | BC loss={loss_bc.item():.3e} | L2 error={l2_err:.4f}"
+            )
 
     log.info("Done.")
 

@@ -22,7 +22,6 @@ generate_dataset()          — build & save (Q, T) training pairs to disk
 import sys
 import time
 from pathlib import Path
-from typing import Tuple
 
 import numpy as np
 import scipy.sparse as sp
@@ -36,10 +35,10 @@ DATA_DIR = Path(__file__).parent / "data"
 # Normalised chip geometry (origin = bottom-left corner, y↑)
 # Each entry: (xmin, ymin, xmax, ymax)
 _CORES = [
-    (0.08, 0.08, 0.47, 0.43),   # Core 0 — bottom-left
-    (0.53, 0.08, 0.92, 0.43),   # Core 1 — bottom-right
-    (0.08, 0.57, 0.47, 0.92),   # Core 2 — top-left
-    (0.53, 0.57, 0.92, 0.92),   # Core 3 — top-right
+    (0.08, 0.08, 0.47, 0.43),  # Core 0 — bottom-left
+    (0.53, 0.08, 0.92, 0.43),  # Core 1 — bottom-right
+    (0.08, 0.57, 0.47, 0.92),  # Core 2 — top-left
+    (0.53, 0.57, 0.92, 0.92),  # Core 3 — top-right
 ]
 # Annotation positions for compare.py figure (normalised, (x, y) from bottom-left)
 LAYOUT_LABELS = [
@@ -56,6 +55,7 @@ LAYOUT_LABELS = [
 
 # ─── Power map ───────────────────────────────────────────────────────────────
 
+
 def chip_floorplan_power_map(H: int = 128, W: int = 128, rng=None) -> np.ndarray:
     """Generate a (H, W) power-density map for a randomised chip workload.
 
@@ -69,11 +69,11 @@ def chip_floorplan_power_map(H: int = 128, W: int = 128, rng=None) -> np.ndarray
     if rng is None:
         rng = np.random.default_rng()
 
-    x  = np.linspace(0, 1, W, dtype=np.float32)
-    y  = np.linspace(0, 1, H, dtype=np.float32)
-    XX, YY = np.meshgrid(x, y)            # YY[i, j] = y-coordinate of row i
+    x = np.linspace(0, 1, W, dtype=np.float32)
+    y = np.linspace(0, 1, H, dtype=np.float32)
+    XX, YY = np.meshgrid(x, y)  # YY[i, j] = y-coordinate of row i
 
-    Q = np.full((H, W), 120.0, dtype=np.float32)   # background leakage
+    Q = np.full((H, W), 120.0, dtype=np.float32)  # background leakage
 
     # I/O ring — outer 6 % of die
     io = (XX < 0.06) | (XX > 0.94) | (YY < 0.06) | (YY > 0.94)
@@ -85,29 +85,27 @@ def chip_floorplan_power_map(H: int = 128, W: int = 128, rng=None) -> np.ndarray
 
     # Memory controllers — override the two ends of the L3 band
     mc_util = float(rng.uniform(0.30, 0.90))
-    mc = ((XX >= 0.06) & (XX <= 0.12) | (XX >= 0.88) & (XX <= 0.94)) & \
-         (YY >= 0.46) & (YY <= 0.54)
+    mc = ((XX >= 0.06) & (XX <= 0.12) | (XX >= 0.88) & (XX <= 0.94)) & (YY >= 0.46) & (YY <= 0.54)
     Q[mc] = 1100 * mc_util
 
     # Four compute cores
     for xmin, ymin, xmax, ymax in _CORES:
         util = float(rng.uniform(0.20, 1.00))
-        core   = (XX >= xmin) & (XX <= xmax) & (YY >= ymin) & (YY <= ymax)
-        shell  = core & ~(
-            (XX >= xmin + 0.04) & (XX <= xmax - 0.04) &
-            (YY >= ymin + 0.04) & (YY <= ymax - 0.04)
+        core = (XX >= xmin) & (XX <= xmax) & (YY >= ymin) & (YY <= ymax)
+        shell = core & ~(
+            (XX >= xmin + 0.04) & (XX <= xmax - 0.04) & (YY >= ymin + 0.04) & (YY <= ymax - 0.04)
         )
         compute = core & (
-            (XX >= xmin + 0.04) & (XX <= xmax - 0.04) &
-            (YY >= ymin + 0.04) & (YY <= ymax - 0.04)
+            (XX >= xmin + 0.04) & (XX <= xmax - 0.04) & (YY >= ymin + 0.04) & (YY <= ymax - 0.04)
         )
-        Q[shell]   = 550  * util   # L2 cache ring
-        Q[compute] = 2200 * util   # compute units
+        Q[shell] = 550 * util  # L2 cache ring
+        Q[compute] = 2200 * util  # compute units
 
     return Q
 
 
 # ─── Sparse Laplacian ────────────────────────────────────────────────────────
+
 
 def _laplacian_matrix(H: int, W: int) -> sp.csr_matrix:
     """Return the (H-2)(W-2) × (H-2)(W-2) FD Laplacian matrix A where
@@ -117,34 +115,35 @@ def _laplacian_matrix(H: int, W: int) -> sp.csr_matrix:
     Entries: diagonal = 4/h², off-diagonal = −1/h²,  h = 1/(H−1).
     Fully vectorised — no Python loops.
     """
-    h      = 1.0 / (H - 1)
+    h = 1.0 / (H - 1)
     ni, nj = H - 2, W - 2
-    n      = ni * nj
-    c      = 1.0 / h**2          # coefficient
+    n = ni * nj
+    c = 1.0 / h**2  # coefficient
 
     idx = np.arange(n).reshape(ni, nj)
 
     # Diagonal
     dr, dc, dv = idx.ravel(), idx.ravel(), np.full(n, 4 * c)
     # East / West
-    er, ec, ev = idx[:, :-1].ravel(), idx[:, 1:].ravel(), np.full((ni)*(nj-1), -c)
-    wr, wc, wv = idx[:, 1:].ravel(),  idx[:, :-1].ravel(), np.full((ni)*(nj-1), -c)
+    er, ec, ev = idx[:, :-1].ravel(), idx[:, 1:].ravel(), np.full((ni) * (nj - 1), -c)
+    wr, wc, wv = idx[:, 1:].ravel(), idx[:, :-1].ravel(), np.full((ni) * (nj - 1), -c)
     # North / South
-    nr, nc_, nv = idx[:-1, :].ravel(), idx[1:, :].ravel(), np.full((ni-1)*nj, -c)
-    sr, sc, sv  = idx[1:, :].ravel(),  idx[:-1, :].ravel(), np.full((ni-1)*nj, -c)
+    nr, nc_, nv = idx[:-1, :].ravel(), idx[1:, :].ravel(), np.full((ni - 1) * nj, -c)
+    sr, sc, sv = idx[1:, :].ravel(), idx[:-1, :].ravel(), np.full((ni - 1) * nj, -c)
 
     rows = np.concatenate([dr, er, wr, nr, sr])
     cols = np.concatenate([dc, ec, wc, nc_, sc])
-    vals = np.concatenate([dv, ev, wv, nv,  sv])
+    vals = np.concatenate([dv, ev, wv, nv, sv])
     return sp.csr_matrix((vals, (rows, cols)), shape=(n, n))
 
 
 # ─── Solver ──────────────────────────────────────────────────────────────────
 
+
 def solve_heat_fd(
     Q: np.ndarray,
     T_ambient: float = 40.0,
-) -> Tuple[np.ndarray, float]:
+) -> tuple[np.ndarray, float]:
     """Solve -∇²T = Q  with T = T_ambient on ∂Ω  using scipy sparse (LU).
 
     Parameters
@@ -158,8 +157,8 @@ def solve_heat_fd(
     elapsed : float [seconds]
     """
     H, W = Q.shape
-    t0  = time.perf_counter()
-    A   = _laplacian_matrix(H, W)
+    t0 = time.perf_counter()
+    A = _laplacian_matrix(H, W)
     rhs = Q[1:-1, 1:-1].ravel().astype(np.float64)
     T_rise = spla.spsolve(A, rhs)
     elapsed = time.perf_counter() - t0
@@ -171,12 +170,13 @@ def solve_heat_fd(
 
 # ─── Dataset generation ──────────────────────────────────────────────────────
 
+
 def generate_dataset(
     n_train: int = 1000,
-    n_test:  int = 200,
-    H:       int = 128,
-    W:       int = 128,
-    seed:    int = 0,
+    n_test: int = 200,
+    H: int = 128,
+    W: int = 128,
+    seed: int = 0,
     out_path: Path = None,
 ) -> Path:
     """Generate (Q, T) pairs with the chip thermal solver and save to .npz.
@@ -189,7 +189,7 @@ def generate_dataset(
         return out_path
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    rng   = np.random.default_rng(seed)
+    rng = np.random.default_rng(seed)
     total = n_train + n_test
 
     print(f"Generating {total} samples at {H}×{W} with scipy sparse FD …")
@@ -203,16 +203,17 @@ def generate_dataset(
         Q_all[i], T_all[i] = Q, T
         if (i + 1) % 200 == 0:
             rate = (i + 1) / (time.perf_counter() - t0)
-            print(f"  {i+1}/{total}  ({rate:.1f} samples/s, "
-                  f"ETA {(total-i-1)/rate:.0f}s)")
+            print(f"  {i + 1}/{total}  ({rate:.1f} samples/s, ETA {(total - i - 1) / rate:.0f}s)")
 
     np.savez(
         out_path,
-        Q_train=Q_all[:n_train], T_train=T_all[:n_train],
-        Q_test =Q_all[n_train:], T_test =T_all[n_train:],
+        Q_train=Q_all[:n_train],
+        T_train=T_all[:n_train],
+        Q_test=Q_all[n_train:],
+        T_test=T_all[n_train:],
     )
     elapsed = time.perf_counter() - t0
-    print(f"Saved → {out_path}  ({elapsed:.1f}s, {total/elapsed:.1f} samples/s)")
+    print(f"Saved → {out_path}  ({elapsed:.1f}s, {total / elapsed:.1f} samples/s)")
     return out_path
 
 
@@ -221,21 +222,21 @@ def generate_dataset(
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
-    rng   = np.random.default_rng(42)
-    Q     = chip_floorplan_power_map(128, 128, rng)
+    rng = np.random.default_rng(42)
+    Q = chip_floorplan_power_map(128, 128, rng)
     T, dt = solve_heat_fd(Q)
 
     print(f"Q  range : [{Q.min():.0f}, {Q.max():.0f}]")
     print(f"T  range : [{T.min():.1f} °C, {T.max():.1f} °C]")
-    print(f"Solve time: {dt*1000:.1f} ms")
+    print(f"Solve time: {dt * 1000:.1f} ms")
 
     fig, axes = plt.subplots(1, 2, figsize=(10, 4))
     im0 = axes[0].imshow(Q, cmap="hot", origin="lower")
-    axes[0].set_title("Power Map Q(x,y)", fontsize=11); axes[0].axis("off")
+    axes[0].set_title("Power Map Q(x,y)", fontsize=11)
+    axes[0].axis("off")
     plt.colorbar(im0, ax=axes[0], label="Power Density")
 
-    im1 = axes[1].imshow(T, cmap="inferno", origin="lower",
-                         vmin=T.min(), vmax=T.max())
+    im1 = axes[1].imshow(T, cmap="inferno", origin="lower", vmin=T.min(), vmax=T.max())
     axes[1].set_title(f"Temperature  [{T.min():.0f}–{T.max():.0f} °C]", fontsize=11)
     axes[1].axis("off")
     plt.colorbar(im1, ax=axes[1], label="T [°C]")

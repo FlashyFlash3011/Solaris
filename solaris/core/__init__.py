@@ -4,7 +4,6 @@
 from solaris.core.meta import ModelMetaData
 from solaris.core.module import Module
 from solaris.core.registry import ModelRegistry
-
 from solaris.exceptions import (
     ExperimentalFeatureWarning,
     FutureFeatureWarning,
@@ -13,7 +12,11 @@ from solaris.exceptions import (
 )
 
 __all__ = [
-    "Module", "ModelMetaData", "ModelRegistry",
-    "SolarisWarning", "ExperimentalFeatureWarning", 
-    "FutureFeatureWarning", "LegacyFeatureWarning"
+    "Module",
+    "ModelMetaData",
+    "ModelRegistry",
+    "SolarisWarning",
+    "ExperimentalFeatureWarning",
+    "FutureFeatureWarning",
+    "LegacyFeatureWarning",
 ]

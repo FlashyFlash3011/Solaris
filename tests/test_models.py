@@ -16,11 +16,14 @@ from solaris.models.uno import UNO
 from solaris.models.wno import WNO
 
 
-@pytest.mark.parametrize("dim,shape", [
-    (1, (2, 3, 64)),
-    (2, (2, 3, 32, 32)),
-    (3, (2, 3, 16, 16, 16)),
-])
+@pytest.mark.parametrize(
+    "dim,shape",
+    [
+        (1, (2, 3, 64)),
+        (2, (2, 3, 32, 32)),
+        (3, (2, 3, 16, 16, 16)),
+    ],
+)
 def test_fno_forward(dim, shape):
     model = FNO(in_channels=3, out_channels=1, hidden_channels=16, n_layers=2, modes=4, dim=dim)
     x = torch.randn(*shape)
@@ -32,9 +35,13 @@ def test_fno_forward(dim, shape):
 
 def test_afno_forward():
     model = AFNO(
-        in_channels=2, out_channels=1,
-        img_size=(32, 32), patch_size=4,
-        hidden_size=64, n_layers=2, num_blocks=4,
+        in_channels=2,
+        out_channels=1,
+        img_size=(32, 32),
+        patch_size=4,
+        hidden_size=64,
+        n_layers=2,
+        num_blocks=4,
     )
     x = torch.randn(2, 2, 32, 32)
     out = model(x)
@@ -58,22 +65,39 @@ def test_fno_parameter_count():
 
 # --- ConstrainedFNO ---
 
+
 def test_constrained_fno_divergence_free():
-    model = ConstrainedFNO(in_channels=2, out_channels=2, hidden_channels=16, n_layers=2, modes=4, constraint="divergence_free")
+    model = ConstrainedFNO(
+        in_channels=2,
+        out_channels=2,
+        hidden_channels=16,
+        n_layers=2,
+        modes=4,
+        constraint="divergence_free",
+    )
     x = torch.randn(2, 2, 32, 32)
     out = model(x)
     assert out.shape == (2, 2, 32, 32)
 
 
 def test_constrained_fno_conservative():
-    model = ConstrainedFNO(in_channels=1, out_channels=1, hidden_channels=16, n_layers=2, modes=4, constraint="conservative")
+    model = ConstrainedFNO(
+        in_channels=1,
+        out_channels=1,
+        hidden_channels=16,
+        n_layers=2,
+        modes=4,
+        constraint="conservative",
+    )
     x = torch.randn(2, 1, 32, 32)
     out = model(x)
     assert out.shape == (2, 1, 32, 32)
 
 
 def test_constrained_fno_none():
-    model = ConstrainedFNO(in_channels=2, out_channels=3, hidden_channels=16, n_layers=2, modes=4, constraint="none")
+    model = ConstrainedFNO(
+        in_channels=2, out_channels=3, hidden_channels=16, n_layers=2, modes=4, constraint="none"
+    )
     x = torch.randn(2, 2, 32, 32)
     out = model(x)
     assert out.shape == (2, 3, 32, 32)
@@ -85,6 +109,7 @@ def test_constrained_fno_invalid_constraint():
 
 
 # --- WNO ---
+
 
 def test_wno_forward():
     model = WNO(in_channels=2, out_channels=1, hidden_channels=16, n_layers=2, levels=2)
@@ -103,6 +128,7 @@ def test_wno_non_power_of_two():
 
 # --- UNO ---
 
+
 def test_uno_forward():
     model = UNO(in_channels=2, out_channels=1, hidden_channels=16, n_levels=2, modes=4)
     x = torch.randn(2, 2, 32, 32)
@@ -112,10 +138,11 @@ def test_uno_forward():
 
 # --- DeepONet ---
 
+
 def test_deeponet_forward():
     model = DeepONet(n_sensors=32, n_query_dim=2, hidden_features=32, n_layers=3, p=32)
-    u = torch.randn(4, 32)   # (B, n_sensors)
-    y = torch.randn(16, 2)   # (Q, n_query_dim)
+    u = torch.randn(4, 32)  # (B, n_sensors)
+    y = torch.randn(16, 2)  # (Q, n_query_dim)
     out = model(u, y)
     assert out.shape == (4, 16)
 
@@ -130,8 +157,11 @@ def test_deeponet_no_bias():
 
 # --- MultiScaleFNO ---
 
+
 def test_multiscale_fno_forward():
-    model = MultiScaleFNO(in_channels=2, out_channels=1, hidden_channels=16, n_layers=2, n_scales=3, max_modes=8)
+    model = MultiScaleFNO(
+        in_channels=2, out_channels=1, hidden_channels=16, n_layers=2, n_scales=3, max_modes=8
+    )
     x = torch.randn(2, 2, 32, 32)
     out = model(x)
     assert out.shape == (2, 1, 32, 32)
@@ -139,12 +169,15 @@ def test_multiscale_fno_forward():
 
 # --- CoupledOperator ---
 
+
 def test_coupled_operator_direct():
     ops = {
         "a": FNO(in_channels=1, out_channels=1, hidden_channels=8, n_layers=1, modes=4, dim=2),
         "b": FNO(in_channels=2, out_channels=2, hidden_channels=8, n_layers=1, modes=4, dim=2),
     }
-    model = CoupledOperator(operators=ops, coupling_channels={"a": 1, "b": 2}, coupling_mode="direct")
+    model = CoupledOperator(
+        operators=ops, coupling_channels={"a": 1, "b": 2}, coupling_mode="direct"
+    )
     inputs = {"a": torch.randn(2, 1, 16, 16), "b": torch.randn(2, 2, 16, 16)}
     out = model(inputs)
     assert out["a"].shape == (2, 1, 16, 16)
@@ -156,7 +189,9 @@ def test_coupled_operator_sequential():
         "a": FNO(in_channels=1, out_channels=1, hidden_channels=8, n_layers=1, modes=4, dim=2),
         "b": FNO(in_channels=1, out_channels=1, hidden_channels=8, n_layers=1, modes=4, dim=2),
     }
-    model = CoupledOperator(operators=ops, coupling_channels={"a": 1, "b": 1}, coupling_mode="sequential")
+    model = CoupledOperator(
+        operators=ops, coupling_channels={"a": 1, "b": 1}, coupling_mode="sequential"
+    )
     inputs = {"a": torch.randn(2, 1, 16, 16), "b": torch.randn(2, 1, 16, 16)}
     out = model(inputs)
     assert out["a"].shape == (2, 1, 16, 16)
@@ -168,7 +203,12 @@ def test_coupled_operator_learned():
         "a": FNO(in_channels=1, out_channels=1, hidden_channels=8, n_layers=1, modes=4, dim=2),
         "b": FNO(in_channels=1, out_channels=1, hidden_channels=8, n_layers=1, modes=4, dim=2),
     }
-    model = CoupledOperator(operators=ops, coupling_channels={"a": 1, "b": 1}, coupling_mode="learned", n_coupling_steps=2)
+    model = CoupledOperator(
+        operators=ops,
+        coupling_channels={"a": 1, "b": 1},
+        coupling_mode="learned",
+        n_coupling_steps=2,
+    )
     inputs = {"a": torch.randn(2, 1, 16, 16), "b": torch.randn(2, 1, 16, 16)}
     out = model(inputs)
     assert out["a"].shape == (2, 1, 16, 16)
@@ -178,6 +218,7 @@ def test_coupled_operator_learned():
 
 
 # --- ConformalNeuralOperator ---
+
 
 def test_conformal_predict_uncalibrated_raises():
     base = FNO(in_channels=1, out_channels=1, hidden_channels=8, n_layers=1, modes=4, dim=2)
@@ -202,11 +243,19 @@ def test_conformal_calibrate_and_predict():
 
 # --- NeuralResidualCorrector ---
 
+
 def test_residual_corrector_forward():
-    solver = lambda x: x[:, :1]  # trivial coarse solver: return first channel
+    def solver(x):
+        return x[:, :1]  # trivial coarse solver: return first channel
+
     model = NeuralResidualCorrector(
-        solver=solver, in_channels=2, out_channels=1,
-        solver_out_channels=1, hidden_channels=8, n_layers=1, modes=4,
+        solver=solver,
+        in_channels=2,
+        out_channels=1,
+        solver_out_channels=1,
+        hidden_channels=8,
+        n_layers=1,
+        modes=4,
     )
     x = torch.randn(2, 2, 16, 16)
     out = model(x)

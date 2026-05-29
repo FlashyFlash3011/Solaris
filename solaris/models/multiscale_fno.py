@@ -26,8 +26,6 @@ The cross-scale attention is a lightweight gated pooling — O(C²) parameters,
 not O(H·W·C²) — so it scales to large spatial grids.
 """
 
-from typing import List
-
 import torch
 import torch.nn as nn
 
@@ -81,7 +79,7 @@ class BandSpectralConv2d(nn.Module):
 
         kx = torch.fft.fftfreq(H, device=x.device).reshape(H, 1)
         ky = torch.fft.rfftfreq(W, device=x.device).reshape(1, W // 2 + 1)
-        k_mag = (kx ** 2 + ky ** 2).sqrt()
+        k_mag = (kx**2 + ky**2).sqrt()
 
         k_max_val = self.k_max if self.k_max < float("inf") else k_mag.max().item() + 1.0
         band_mask = (k_mag >= self.k_min) & (k_mag < k_max_val)  # (H, W//2+1)
@@ -133,9 +131,9 @@ class CrossScaleAttention(nn.Module):
         self.v_proj = nn.Conv2d(total, total, 1)
         self.out_proj = nn.Conv2d(total, total, 1)
         self.norm = nn.GroupNorm(min(8, channels), total)
-        self.scale = channels ** -0.5
+        self.scale = channels**-0.5
 
-    def forward(self, scale_feats: List[torch.Tensor]) -> List[torch.Tensor]:
+    def forward(self, scale_feats: list[torch.Tensor]) -> list[torch.Tensor]:
         combined = torch.cat(scale_feats, dim=1)  # (B, C*n_scales, H, W)
 
         q = self.q_proj(combined)  # (B, C, H, W)
@@ -159,7 +157,7 @@ class MultiScaleFNOBlock(nn.Module):
         self,
         channels: int,
         n_scales: int,
-        band_edges: List[float],
+        band_edges: list[float],
         max_modes: int,
     ) -> None:
         super().__init__()
@@ -167,19 +165,13 @@ class MultiScaleFNOBlock(nn.Module):
 
         self.band_convs = nn.ModuleList(
             [
-                BandSpectralConv2d(
-                    channels, channels, band_edges[i], band_edges[i + 1], max_modes
-                )
+                BandSpectralConv2d(channels, channels, band_edges[i], band_edges[i + 1], max_modes)
                 for i in range(n_scales)
             ]
         )
-        self.bypasses = nn.ModuleList(
-            [nn.Conv2d(channels, channels, 1) for _ in range(n_scales)]
-        )
+        self.bypasses = nn.ModuleList([nn.Conv2d(channels, channels, 1) for _ in range(n_scales)])
         self.cross_attn = CrossScaleAttention(channels, n_scales)
-        self.norms = nn.ModuleList(
-            [nn.InstanceNorm2d(channels) for _ in range(n_scales)]
-        )
+        self.norms = nn.ModuleList([nn.InstanceNorm2d(channels) for _ in range(n_scales)])
         self.act = nn.GELU()
         self.aggregate = nn.Conv2d(channels * n_scales, channels, 1)
 

@@ -22,7 +22,7 @@ lower-amplitude, and has a simpler spectral structure — exactly the kind of
 signal a Fourier-based network learns efficiently.
 """
 
-from typing import Callable, Optional
+from collections.abc import Callable
 
 import torch
 import torch.nn as nn

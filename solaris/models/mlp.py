@@ -3,8 +3,6 @@
 
 """Fully-connected (MLP) baseline model."""
 
-from typing import List, Optional, Type
-
 import torch
 import torch.nn as nn
 
@@ -50,7 +48,7 @@ class FullyConnected(Module):
         activation: str = "silu",
     ) -> None:
         super().__init__(meta=self._meta)
-        layers: List[nn.Module] = []
+        layers: list[nn.Module] = []
         in_dim = in_features
         for _ in range(n_layers):
             layers.append(nn.Linear(in_dim, hidden_features))

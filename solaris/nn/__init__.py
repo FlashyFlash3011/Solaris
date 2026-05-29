@@ -1,14 +1,14 @@
 from solaris.nn.activations import CappedGELU, CappedLeakyReLU, Siren, Stan
-from solaris.nn.embeddings import FourierEmbedding, PositionalEmbedding, SinusoidalTimestepEmbedding
-from solaris.nn.spectral import SpectralConv1d, SpectralConv2d, SpectralConv3d
 from solaris.nn.constraints import (
-    DivergenceFreeProjection2d,
-    CurlFreeProjection2d,
-    NeumannBCLayer,
-    DirichletBCLayer,
     ConservationProjection,
+    CurlFreeProjection2d,
+    DirichletBCLayer,
+    DivergenceFreeProjection2d,
+    NeumannBCLayer,
     SpectralBandFilter,
 )
+from solaris.nn.embeddings import FourierEmbedding, PositionalEmbedding, SinusoidalTimestepEmbedding
+from solaris.nn.spectral import SpectralConv1d, SpectralConv2d, SpectralConv3d
 
 __all__ = [
     "CappedGELU",

@@ -10,8 +10,6 @@ Note: edge_index is expected as a (2, E) LongTensor.
       edge_features: (E, edge_feat_dim)
 """
 
-from typing import Optional
-
 import torch
 import torch.nn as nn
 
@@ -35,7 +33,9 @@ class EdgeBlock(nn.Module):
         self.mlp = _mlp(2 * node_dim + edge_dim, hidden_dim, out_dim)
         self.norm = nn.LayerNorm(out_dim)
 
-    def forward(self, node_feat: torch.Tensor, edge_feat: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, node_feat: torch.Tensor, edge_feat: torch.Tensor, edge_index: torch.Tensor
+    ) -> torch.Tensor:
         src, dst = edge_index
         inp = torch.cat([node_feat[src], node_feat[dst], edge_feat], dim=-1)
         return self.norm(self.mlp(inp))
@@ -49,9 +49,17 @@ class NodeBlock(nn.Module):
         self.mlp = _mlp(node_dim + edge_dim, hidden_dim, out_dim)
         self.norm = nn.LayerNorm(out_dim)
 
-    def forward(self, node_feat: torch.Tensor, edge_feat: torch.Tensor, edge_index: torch.Tensor, n_nodes: int) -> torch.Tensor:
+    def forward(
+        self,
+        node_feat: torch.Tensor,
+        edge_feat: torch.Tensor,
+        edge_index: torch.Tensor,
+        n_nodes: int,
+    ) -> torch.Tensor:
         _, dst = edge_index
-        agg = torch.zeros(n_nodes, edge_feat.size(-1), device=node_feat.device, dtype=node_feat.dtype)
+        agg = torch.zeros(
+            n_nodes, edge_feat.size(-1), device=node_feat.device, dtype=node_feat.dtype
+        )
         agg.scatter_add_(0, dst.unsqueeze(-1).expand_as(edge_feat), edge_feat)
         inp = torch.cat([node_feat, agg], dim=-1)
         return self.norm(self.mlp(inp))
@@ -92,13 +100,20 @@ class MeshGraphNet(Module):
         self.node_enc = _mlp(node_feat_dim, hidden_dim, hidden_dim)
         self.edge_enc = _mlp(edge_feat_dim, hidden_dim, hidden_dim)
         # Processor (alternating edge/node blocks with residual connections)
-        self.edge_blocks = nn.ModuleList([EdgeBlock(hidden_dim, hidden_dim, hidden_dim, hidden_dim) for _ in range(n_layers)])
-        self.node_blocks = nn.ModuleList([NodeBlock(hidden_dim, hidden_dim, hidden_dim, hidden_dim) for _ in range(n_layers)])
+        self.edge_blocks = nn.ModuleList(
+            [EdgeBlock(hidden_dim, hidden_dim, hidden_dim, hidden_dim) for _ in range(n_layers)]
+        )
+        self.node_blocks = nn.ModuleList(
+            [NodeBlock(hidden_dim, hidden_dim, hidden_dim, hidden_dim) for _ in range(n_layers)]
+        )
         # Decoder
         self.decoder = _mlp(hidden_dim, hidden_dim, out_dim)
         self._capture_init_args(
-            node_feat_dim=node_feat_dim, edge_feat_dim=edge_feat_dim, out_dim=out_dim,
-            hidden_dim=hidden_dim, n_layers=n_layers,
+            node_feat_dim=node_feat_dim,
+            edge_feat_dim=edge_feat_dim,
+            out_dim=out_dim,
+            hidden_dim=hidden_dim,
+            n_layers=n_layers,
         )
 
     def forward(

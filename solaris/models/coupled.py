@@ -43,8 +43,6 @@ Example
     u_pred  = outputs["fluid"]
 """
 
-from typing import Dict, List, Optional
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -84,7 +82,7 @@ class LearnedCouplingLayer(nn.Module):
         )
         self.act = nn.GELU()
 
-    def forward(self, field_outputs: List[torch.Tensor]) -> List[torch.Tensor]:
+    def forward(self, field_outputs: list[torch.Tensor]) -> list[torch.Tensor]:
         projected = [self.act(self.proj_in[i](f)) for i, f in enumerate(field_outputs)]
 
         W = torch.sigmoid(self.coupling_weights)  # (n_fields, n_fields)
@@ -132,15 +130,14 @@ class CoupledOperator(Module):
 
     def __init__(
         self,
-        operators: Dict[str, nn.Module],
-        coupling_channels: Dict[str, int],
+        operators: dict[str, nn.Module],
+        coupling_channels: dict[str, int],
         coupling_mode: str = "learned",
         n_coupling_steps: int = 2,
     ) -> None:
         super().__init__(meta=self._meta)
         assert coupling_mode in ("sequential", "direct", "learned"), (
-            f"coupling_mode must be one of 'sequential', 'direct', 'learned'; "
-            f"got {coupling_mode!r}"
+            f"coupling_mode must be one of 'sequential', 'direct', 'learned'; got {coupling_mode!r}"
         )
 
         self.coupling_mode = coupling_mode
@@ -170,7 +167,7 @@ class CoupledOperator(Module):
             n_coupling_steps=n_coupling_steps,
         )
 
-    def forward(self, inputs: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def forward(self, inputs: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
         Parameters
         ----------
@@ -203,9 +200,7 @@ class CoupledOperator(Module):
 
         elif self.coupling_mode == "learned":
             # Bring all field outputs to common channel width
-            field_feats = [
-                self.adapters[name](outputs[name]) for name in self.field_names
-            ]
+            field_feats = [self.adapters[name](outputs[name]) for name in self.field_names]
             # Iterative coupling rounds
             for layer in self.coupling_layers:
                 field_feats = layer(field_feats)
@@ -217,7 +212,7 @@ class CoupledOperator(Module):
         # "direct" mode: return independent outputs unchanged
         return outputs
 
-    def coupling_strengths(self) -> Optional[torch.Tensor]:
+    def coupling_strengths(self) -> torch.Tensor | None:
         """Return learned coupling matrix for the final coupling layer.
 
         Returns ``None`` if not in ``"learned"`` mode.  Entry [i, j] is the

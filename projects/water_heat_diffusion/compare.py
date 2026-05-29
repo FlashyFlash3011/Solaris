@@ -18,28 +18,28 @@ import argparse
 import time
 from pathlib import Path
 
+import matplotlib.gridspec as gridspec
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
 from matplotlib.colors import Normalize
-from mpl_toolkits.axes_grid1 import make_axes_locatable
+from solver import make_initial_field, solve_diffusion
 
 from solaris.models.fno import FNO
 from solaris.utils import get_logger
-from solver import make_initial_field, solve_diffusion, ALPHA_WATER
 
 
 def load_model_and_stats(ckpt_dir: str, device: torch.device):
     ckpt_dir = Path(ckpt_dir)
     stats = np.load(ckpt_dir / "norm_stats.npz")
     T_ambient = float(stats["T_ambient"])
-    t_end     = float(stats["t_end"])
-    times     = stats["times"].tolist()
+    t_end = float(stats["t_end"])
+    times = stats["times"].tolist()
 
     ckpt = torch.load(ckpt_dir / "best_fno.pt", map_location=device, weights_only=False)
-    model = FNO(in_channels=2, out_channels=1, hidden_channels=64,
-                n_layers=4, modes=16, dim=2).to(device)
+    model = FNO(in_channels=2, out_channels=1, hidden_channels=64, n_layers=4, modes=16, dim=2).to(
+        device
+    )
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
     return model, T_ambient, t_end, times
@@ -56,8 +56,7 @@ def fno_predict_sequence(model, T0, times, t_end, T_ambient, device):
     # GPU warmup (not counted in timing)
     t_norm_dummy = np.full((1, H, W), 0.5, dtype=np.float32)
     x_dummy = torch.as_tensor(
-        np.concatenate([T0_n[None, None], t_norm_dummy[None]], axis=1),
-        dtype=torch.float32
+        np.concatenate([T0_n[None, None], t_norm_dummy[None]], axis=1), dtype=torch.float32
     ).to(device)
     with torch.no_grad():
         _ = model(x_dummy)
@@ -69,8 +68,7 @@ def fno_predict_sequence(model, T0, times, t_end, T_ambient, device):
         t_norm = t / t_end
         t_ch = np.full((1, H, W), t_norm, dtype=np.float32)
         x = torch.as_tensor(
-            np.concatenate([T0_n[None, None], t_ch[None]], axis=1),
-            dtype=torch.float32
+            np.concatenate([T0_n[None, None], t_ch[None]], axis=1), dtype=torch.float32
         ).to(device)
         with torch.no_grad():
             pred_n = model(x)
@@ -83,8 +81,7 @@ def fno_predict_sequence(model, T0, times, t_end, T_ambient, device):
     return np.stack(preds), fno_time
 
 
-def make_comparison_figure(T0, solver_snaps, fno_snaps, times,
-                           solver_time, fno_time, out_path):
+def make_comparison_figure(T0, solver_snaps, fno_snaps, times, solver_time, fno_time, out_path):
     n_times = len(times)
     T_ambient = float(T0[0, 0])
 
@@ -104,12 +101,10 @@ def make_comparison_figure(T0, solver_snaps, fno_snaps, times,
     fig.patch.set_facecolor("#0e0e0e")
 
     # 4 image rows + 1 bar-chart row
-    outer = gridspec.GridSpec(5, 1, figure=fig,
-                              height_ratios=[1, 1, 1, 1, 0.65],
-                              hspace=0.08)
+    outer = gridspec.GridSpec(5, 1, figure=fig, height_ratios=[1, 1, 1, 1, 0.65], hspace=0.08)
 
     row_labels = ["Initial field", "Traditional solver", "FNO surrogate (ours)", "Absolute error"]
-    row_color  = ["#4fc3f7",       "#ef9a9a",            "#a5d6a7",              "#ffe082"]
+    row_color = ["#4fc3f7", "#ef9a9a", "#a5d6a7", "#ffe082"]
 
     col_titles = ["t = 0s"] + [f"t = {t:.1f}s" for t in times]
 
@@ -122,7 +117,8 @@ def make_comparison_figure(T0, solver_snaps, fno_snaps, times,
         for col in range(n_times + 1):
             ax = fig.add_subplot(inner[col])
             ax.set_facecolor("#0e0e0e")
-            ax.set_xticks([]); ax.set_yticks([])
+            ax.set_xticks([])
+            ax.set_yticks([])
             for spine in ax.spines.values():
                 spine.set_edgecolor("#333333")
             row_axes.append(ax)
@@ -132,7 +128,7 @@ def make_comparison_figure(T0, solver_snaps, fno_snaps, times,
     for col in range(n_times + 1):
         ax = axes_grid[0][col]
         if col == 0:
-            im = ax.imshow(T0, cmap=cmap, norm=norm, origin="lower", aspect="auto")
+            ax.imshow(T0, cmap=cmap, norm=norm, origin="lower", aspect="auto")
             ax.set_title(col_titles[0], color="white", fontsize=10, pad=4)
         else:
             ax.axis("off")
@@ -150,13 +146,11 @@ def make_comparison_figure(T0, solver_snaps, fno_snaps, times,
             if col == 0:
                 ax.axis("off")
             else:
-                im = ax.imshow(data[col - 1], cmap=cm, norm=dn,
-                               origin="lower", aspect="auto")
+                ax.imshow(data[col - 1], cmap=cm, norm=dn, origin="lower", aspect="auto")
                 if row == 1:
                     ax.set_title(col_titles[col], color="white", fontsize=10, pad=4)
             if col == 0:
-                ax.set_ylabel(row_labels[row], color=row_color[row],
-                              fontsize=11, labelpad=6)
+                ax.set_ylabel(row_labels[row], color=row_color[row], fontsize=11, labelpad=6)
 
     # Shared colourbar (temperature rows)
     cbar_ax = fig.add_axes([0.92, 0.32, 0.012, 0.52])
@@ -172,15 +166,22 @@ def make_comparison_figure(T0, solver_snaps, fno_snaps, times,
     for spine in ax_bar.spines.values():
         spine.set_edgecolor("#444444")
 
-    methods = ["Traditional\nFD Solver", f"FNO Surrogate\n(our model, AMD GPU)"]
+    methods = ["Traditional\nFD Solver", "FNO Surrogate\n(our model, AMD GPU)"]
     timings = [solver_time, fno_time]
-    colors  = ["#ef9a9a", "#a5d6a7"]
+    colors = ["#ef9a9a", "#a5d6a7"]
     bars = ax_bar.barh(methods, timings, color=colors, height=0.45, edgecolor="#222222")
 
     for bar, t in zip(bars, timings):
-        label = f"{t:.3f}s" if t >= 0.01 else f"{t*1000:.1f}ms"
-        ax_bar.text(bar.get_width() + solver_time * 0.01, bar.get_y() + bar.get_height() / 2,
-                    label, va="center", color="white", fontsize=13, fontweight="bold")
+        label = f"{t:.3f}s" if t >= 0.01 else f"{t * 1000:.1f}ms"
+        ax_bar.text(
+            bar.get_width() + solver_time * 0.01,
+            bar.get_y() + bar.get_height() / 2,
+            label,
+            va="center",
+            color="white",
+            fontsize=13,
+            fontweight="bold",
+        )
 
     ax_bar.set_xlim(0, solver_time * 1.25)
     ax_bar.set_xlabel("Wall time (seconds)", color="white", fontsize=11)
@@ -192,21 +193,25 @@ def make_comparison_figure(T0, solver_snaps, fno_snaps, times,
     # ── Title ─────────────────────────────────────────────────────────────────
     fig.suptitle(
         f"Heat Diffusion in Water  ·  Traditional Solver vs FNO Surrogate\n"
-        f"Solver: {solver_time:.2f}s   |   FNO: {fno_time*1000:.1f}ms   |   "
+        f"Solver: {solver_time:.2f}s   |   FNO: {fno_time * 1000:.1f}ms   |   "
         f"Speedup: {speedup:.0f}×   |   Max error: {err_max:.2f}°C",
-        color="white", fontsize=14, fontweight="bold", y=0.995
+        color="white",
+        fontsize=14,
+        fontweight="bold",
+        y=0.995,
     )
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=140, bbox_inches="tight",
-                facecolor=fig.get_facecolor())
+    fig.savefig(out_path, dpi=140, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
     return speedup, err_max
 
 
 def run(args):
     log = get_logger("compare")
-    device = torch.device(args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu")
+    device = torch.device(
+        args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu"
+    )
     log.info(f"Device: {device}")
     if device.type == "cuda":
         log.info(f"GPU: {torch.cuda.get_device_name(0)}")
@@ -223,29 +228,26 @@ def run(args):
     snaps_all, snap_times, solver_time, n_steps = solve_diffusion(
         T0, t_end=t_end, n_snapshots=len(times) + 1
     )
-    solver_snaps = snaps_all[1:]    # drop t=0 frame
+    solver_snaps = snaps_all[1:]  # drop t=0 frame
     log.info(f"  Solver: {n_steps:,} time steps  →  {solver_time:.3f}s")
 
     # ── FNO surrogate ─────────────────────────────────────────────────────────
     log.info("Running FNO surrogate …")
-    fno_snaps, fno_time = fno_predict_sequence(
-        model, T0, times, t_end, T_ambient, device
-    )
-    log.info(f"  FNO: {len(times)} predictions  →  {fno_time*1000:.2f}ms total")
+    fno_snaps, fno_time = fno_predict_sequence(model, T0, times, t_end, T_ambient, device)
+    log.info(f"  FNO: {len(times)} predictions  →  {fno_time * 1000:.2f}ms total")
 
     # ── Results ───────────────────────────────────────────────────────────────
     speedup = solver_time / fno_time
     max_err = np.abs(solver_snaps - fno_snaps).max()
-    log.info(f"\n{'='*50}")
+    log.info(f"\n{'=' * 50}")
     log.info(f"  Solver:   {solver_time:.3f}s  ({n_steps:,} steps)")
-    log.info(f"  FNO:      {fno_time*1000:.2f}ms  ({len(times)} forward passes)")
+    log.info(f"  FNO:      {fno_time * 1000:.2f}ms  ({len(times)} forward passes)")
     log.info(f"  Speedup:  {speedup:.0f}×")
-    log.info(f"  Max err:  {max_err:.3f}°C  (out of {T0.max()-T0[0,0]:.1f}°C range)")
+    log.info(f"  Max err:  {max_err:.3f}°C  (out of {T0.max() - T0[0, 0]:.1f}°C range)")
 
     out = Path(args.output)
     speedup, err = make_comparison_figure(
-        T0, solver_snaps, fno_snaps, times,
-        solver_time, fno_time, out
+        T0, solver_snaps, fno_snaps, times, solver_time, fno_time, out
     )
     log.info(f"\nFigure saved → {out}")
 
@@ -253,7 +255,7 @@ def run(args):
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--checkpoint_dir", default="checkpoints")
-    p.add_argument("--device",         default="cuda")
-    p.add_argument("--seed",           type=int, default=2024)
-    p.add_argument("--output",         default="results/comparison.png")
+    p.add_argument("--device", default="cuda")
+    p.add_argument("--seed", type=int, default=2024)
+    p.add_argument("--output", default="results/comparison.png")
     run(p.parse_args())

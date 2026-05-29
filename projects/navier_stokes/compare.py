@@ -59,8 +59,8 @@ def compare(args):
         t0 = time.perf_counter()
         snaps = solve_ns(omega0, nu=1e-3, dt=0.01, n_steps=4, n_snapshots=5)
         solver_times.append(time.perf_counter() - t0)
-        omega_t = snaps[0].unsqueeze(0).unsqueeze(0)   # (1,1,H,W)
-        omega_gt = snaps[-1]                             # (H,W) ground truth
+        omega_t = snaps[0].unsqueeze(0).unsqueeze(0)  # (1,1,H,W)
+        omega_gt = snaps[-1]  # (H,W) ground truth
 
         # FNO inference
         inp_norm = (omega_t - in_mean) / in_std
@@ -86,9 +86,12 @@ def compare(args):
     try:
         import matplotlib.pyplot as plt
 
-        omega0_last = random_vorticity_ic(64, 64, n_modes=6, rng=np.random.default_rng(999 + args.n_test - 1))
+        omega0_last = random_vorticity_ic(
+            64, 64, n_modes=6, rng=np.random.default_rng(999 + args.n_test - 1)
+        )
         snaps = solve_ns(omega0_last, nu=1e-3, dt=0.01, n_steps=4, n_snapshots=5)
-        inp = snaps[0]; gt = snaps[-1]
+        inp = snaps[0]
+        gt = snaps[-1]
         inp_norm = (inp.unsqueeze(0).unsqueeze(0) - in_mean) / in_std
         with torch.no_grad():
             pr_norm = model(inp_norm.to(device)).squeeze().cpu()
@@ -97,9 +100,12 @@ def compare(args):
         fig, axes = plt.subplots(1, 3, figsize=(12, 4))
         vmax = max(gt.abs().max().item(), pr.abs().max().item())
         kw = dict(cmap="RdBu_r", vmin=-vmax, vmax=vmax, origin="lower")
-        axes[0].imshow(inp.numpy(), **kw); axes[0].set_title("Input ω(t)")
-        im1 = axes[1].imshow(gt.numpy(), **kw); axes[1].set_title("Ground Truth ω(t+Δt)")
-        im2 = axes[2].imshow(pr.numpy(), **kw); axes[2].set_title("FNO Prediction")
+        axes[0].imshow(inp.numpy(), **kw)
+        axes[0].set_title("Input ω(t)")
+        axes[1].imshow(gt.numpy(), **kw)
+        axes[1].set_title("Ground Truth ω(t+Δt)")
+        im2 = axes[2].imshow(pr.numpy(), **kw)
+        axes[2].set_title("FNO Prediction")
         plt.colorbar(im2, ax=axes[2])
         plt.tight_layout()
         out = Path(args.output)
@@ -112,8 +118,8 @@ def compare(args):
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
-    p.add_argument("--device",          default="cpu")
-    p.add_argument("--checkpoint_dir",  default="checkpoints")
-    p.add_argument("--n_test",          type=int, default=20)
-    p.add_argument("--output",          default="comparison.png")
+    p.add_argument("--device", default="cpu")
+    p.add_argument("--checkpoint_dir", default="checkpoints")
+    p.add_argument("--n_test", type=int, default=20)
+    p.add_argument("--output", default="comparison.png")
     compare(p.parse_args())

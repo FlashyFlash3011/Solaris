@@ -29,8 +29,8 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from solaris.models import FNO, CoupledOperator
 from solaris.metrics import relative_l2_error
+from solaris.models import FNO, CoupledOperator
 from solaris.utils import get_logger
 
 
@@ -67,7 +67,9 @@ def generate_coupled_data(n: int, res: int, seed: int = 0):
         dpsi_dx = np.gradient(psi, axis=1)
         T = T + 0.1 * gaussian_filter(dpsi_dx, sigma=2)
 
-        Q_all.append(Q); T_all.append(T); Psi_all.append(psi)
+        Q_all.append(Q)
+        T_all.append(T)
+        Psi_all.append(psi)
 
     Q = np.stack(Q_all)[:, None].astype(np.float32)
     T = np.stack(T_all)[:, None].astype(np.float32)
@@ -92,25 +94,39 @@ def run(args):
     Psi_t = torch.as_tensor(Psi)
 
     train_ds = TensorDataset(Q_t[: args.n_train], T_t[: args.n_train], Psi_t[: args.n_train])
-    val_ds   = TensorDataset(Q_t[args.n_train :], T_t[args.n_train :], Psi_t[args.n_train :])
+    val_ds = TensorDataset(Q_t[args.n_train :], T_t[args.n_train :], Psi_t[args.n_train :])
     train_dl = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
-    val_dl   = DataLoader(val_ds,   batch_size=args.batch_size)
+    val_dl = DataLoader(val_ds, batch_size=args.batch_size)
 
     hidden, modes, layers = args.hidden, args.modes, args.n_layers
 
     # ── Model A: two independent FNOs ──
-    fno_T   = FNO(in_channels=1, out_channels=1, hidden_channels=hidden,
-                  n_layers=layers, modes=modes, dim=2).to(device)
-    fno_Psi = FNO(in_channels=1, out_channels=1, hidden_channels=hidden,
-                  n_layers=layers, modes=modes, dim=2).to(device)
+    fno_T = FNO(
+        in_channels=1, out_channels=1, hidden_channels=hidden, n_layers=layers, modes=modes, dim=2
+    ).to(device)
+    fno_Psi = FNO(
+        in_channels=1, out_channels=1, hidden_channels=hidden, n_layers=layers, modes=modes, dim=2
+    ).to(device)
 
     # ── Model B: CoupledOperator with learned coupling ──
     coupled = CoupledOperator(
         operators={
-            "thermal": FNO(in_channels=1, out_channels=1, hidden_channels=hidden,
-                           n_layers=layers, modes=modes, dim=2),
-            "flow":    FNO(in_channels=1, out_channels=1, hidden_channels=hidden,
-                           n_layers=layers, modes=modes, dim=2),
+            "thermal": FNO(
+                in_channels=1,
+                out_channels=1,
+                hidden_channels=hidden,
+                n_layers=layers,
+                modes=modes,
+                dim=2,
+            ),
+            "flow": FNO(
+                in_channels=1,
+                out_channels=1,
+                hidden_channels=hidden,
+                n_layers=layers,
+                modes=modes,
+                dim=2,
+            ),
         },
         coupling_channels={"thermal": 1, "flow": 1},
         coupling_mode="learned",
@@ -123,31 +139,35 @@ def run(args):
 
     def train_independent():
         opt = torch.optim.AdamW(
-            list(fno_T.parameters()) + list(fno_Psi.parameters()),
-            lr=args.lr, weight_decay=1e-4
+            list(fno_T.parameters()) + list(fno_Psi.parameters()), lr=args.lr, weight_decay=1e-4
         )
         sch = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
         best = float("inf")
         for ep in range(1, args.epochs + 1):
-            fno_T.train(); fno_Psi.train()
+            fno_T.train()
+            fno_Psi.train()
             for q, t, psi in train_dl:
                 q, t, psi = q.to(device), t.to(device), psi.to(device)
-                loss = nn.functional.mse_loss(fno_T(q), t) + \
-                       nn.functional.mse_loss(fno_Psi(q), psi)
-                opt.zero_grad(); loss.backward()
+                loss = nn.functional.mse_loss(fno_T(q), t) + nn.functional.mse_loss(fno_Psi(q), psi)
+                opt.zero_grad()
+                loss.backward()
                 torch.nn.utils.clip_grad_norm_(
                     list(fno_T.parameters()) + list(fno_Psi.parameters()), 1.0
                 )
                 opt.step()
             sch.step()
 
-            fno_T.eval(); fno_Psi.eval()
+            fno_T.eval()
+            fno_Psi.eval()
             vl2 = 0.0
             with torch.no_grad():
                 for q, t, psi in val_dl:
                     q, t, psi = q.to(device), t.to(device), psi.to(device)
-                    vl2 += (relative_l2_error(fno_T(q), t) +
-                            relative_l2_error(fno_Psi(q), psi)).item() / 2 * len(q)
+                    vl2 += (
+                        (relative_l2_error(fno_T(q), t) + relative_l2_error(fno_Psi(q), psi)).item()
+                        / 2
+                        * len(q)
+                    )
             vl2 /= len(val_ds)
             best = min(best, vl2)
             if ep % max(1, args.epochs // 4) == 0:
@@ -163,9 +183,11 @@ def run(args):
             for q, t, psi in train_dl:
                 q, t, psi = q.to(device), t.to(device), psi.to(device)
                 out = coupled({"thermal": q, "flow": q})
-                loss = nn.functional.mse_loss(out["thermal"], t) + \
-                       nn.functional.mse_loss(out["flow"], psi)
-                opt.zero_grad(); loss.backward()
+                loss = nn.functional.mse_loss(out["thermal"], t) + nn.functional.mse_loss(
+                    out["flow"], psi
+                )
+                opt.zero_grad()
+                loss.backward()
                 torch.nn.utils.clip_grad_norm_(coupled.parameters(), 1.0)
                 opt.step()
             sch.step()
@@ -176,8 +198,14 @@ def run(args):
                 for q, t, psi in val_dl:
                     q, t, psi = q.to(device), t.to(device), psi.to(device)
                     out = coupled({"thermal": q, "flow": q})
-                    vl2 += (relative_l2_error(out["thermal"], t) +
-                            relative_l2_error(out["flow"], psi)).item() / 2 * len(q)
+                    vl2 += (
+                        (
+                            relative_l2_error(out["thermal"], t)
+                            + relative_l2_error(out["flow"], psi)
+                        ).item()
+                        / 2
+                        * len(q)
+                    )
             vl2 /= len(val_ds)
             best = min(best, vl2)
             if ep % max(1, args.epochs // 4) == 0:

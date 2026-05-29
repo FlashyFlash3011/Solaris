@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from dataclasses import dataclass, field
-from typing import List, Optional
 
 
 @dataclass
@@ -24,7 +23,7 @@ class ModelMetaData:
     """
 
     name: str = "PhysicsNeMo Model"
-    nvp_tags: List[str] = field(default_factory=list)
+    nvp_tags: list[str] = field(default_factory=list)
     var_dim: int = 1
     func_torch: bool = True
     func_cuda: bool = False
@@ -36,4 +35,4 @@ class ModelMetaData:
     amp_cpu: bool = False
     amp_gpu: bool = False
     torch_fx: bool = False
-    io: Optional[str] = None
+    io: str | None = None

@@ -24,7 +24,6 @@ import argparse
 import sys
 import time
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 import torch
@@ -37,30 +36,28 @@ from solver import (
     random_hurricane_track,
     run_hurricane_simulation,
 )
-from train import FloodExtractor, apply_normalisation, build_model, compute_norm_stats
+from train import FloodExtractor, build_model
 
 from solaris.metrics import relative_l2_error
 from solaris.models.conformal import ConformalNeuralOperator
 from solaris.utils import get_logger
 
-
 # ---------------------------------------------------------------------------
 # Checkpoint loading
 # ---------------------------------------------------------------------------
+
 
 def load_model(checkpoint_dir: str, device: torch.device):
     """Load CoupledOperator from checkpoint.
 
     Returns (model, norm_stats_dict).
     """
-    ckpt_dir  = Path(checkpoint_dir)
+    ckpt_dir = Path(checkpoint_dir)
     ckpt_path = ckpt_dir / "best_coupled.pt"
     stats_path = ckpt_dir / "norm_stats.npz"
 
     if not ckpt_path.exists():
-        raise FileNotFoundError(
-            f"No checkpoint found at {ckpt_path}. Run train.py first."
-        )
+        raise FileNotFoundError(f"No checkpoint found at {ckpt_path}. Run train.py first.")
 
     ckpt = torch.load(ckpt_path, map_location=device)
 
@@ -69,9 +66,9 @@ def load_model(checkpoint_dir: str, device: torch.device):
 
     class _Args:
         hidden_flood = extra.get("hidden_flood", 64)
-        hidden_wind  = extra.get("hidden_wind",  48)
-        n_layers     = extra.get("n_layers",      4)
-        modes        = extra.get("modes",         16)
+        hidden_wind = extra.get("hidden_wind", 48)
+        n_layers = extra.get("n_layers", 4)
+        modes = extra.get("modes", 16)
 
     model = build_model(_Args())
     model.load_state_dict(ckpt["model_state_dict"])
@@ -82,7 +79,9 @@ def load_model(checkpoint_dir: str, device: torch.device):
     return model, stats
 
 
-def load_conformal(checkpoint_dir: str, model, device: torch.device) -> Optional[ConformalNeuralOperator]:
+def load_conformal(
+    checkpoint_dir: str, model, device: torch.device
+) -> ConformalNeuralOperator | None:
     """Load ConformalNeuralOperator wrapping the flood extractor."""
     path = Path(checkpoint_dir) / "conformal_predictor.pt"
     if not path.exists():
@@ -101,9 +100,10 @@ def load_conformal(checkpoint_dir: str, model, device: torch.device) -> Optional
 # Surrogate rollout
 # ---------------------------------------------------------------------------
 
+
 def surrogate_rollout(
     model,
-    predictor: Optional[ConformalNeuralOperator],
+    predictor: ConformalNeuralOperator | None,
     bathy: np.ndarray,
     result_solver: dict,
     stats: dict,
@@ -122,29 +122,37 @@ def surrogate_rollout(
     flood_upper  : np.ndarray or None
     """
     n_snap = len(result_solver["times_h"])
-    bathy_t = torch.as_tensor(bathy[None, None], dtype=torch.float32)  # (1,1,H,W)
 
     # Denorm helpers
     fi_mean = torch.as_tensor(stats["fi_mean"], dtype=torch.float32).to(device)
-    fi_std  = torch.as_tensor(stats["fi_std"],  dtype=torch.float32).to(device)
+    fi_std = torch.as_tensor(stats["fi_std"], dtype=torch.float32).to(device)
     ft_mean = torch.as_tensor(stats["ft_mean"], dtype=torch.float32).to(device)
-    ft_std  = torch.as_tensor(stats["ft_std"],  dtype=torch.float32).to(device)
+    ft_std = torch.as_tensor(stats["ft_std"], dtype=torch.float32).to(device)
     wi_mean = torch.as_tensor(stats["wi_mean"], dtype=torch.float32).to(device)
-    wi_std  = torch.as_tensor(stats["wi_std"],  dtype=torch.float32).to(device)
+    wi_std = torch.as_tensor(stats["wi_std"], dtype=torch.float32).to(device)
     wt_mean = torch.as_tensor(stats["wt_mean"], dtype=torch.float32).to(device)
-    wt_std  = torch.as_tensor(stats["wt_std"],  dtype=torch.float32).to(device)
+    wt_std = torch.as_tensor(stats["wt_std"], dtype=torch.float32).to(device)
 
     def norm_flood_in(h_arr, bathy_arr, wu_arr, wv_arr, t_norm_val):
         """Build and normalise a (1,5,H,W) flood input tensor."""
         h_log = np.log1p(np.maximum(h_arr, 0.0))
-        fi = np.stack([h_log[None], bathy_arr[None], wu_arr[None], wv_arr[None],
-                       np.full((1, H, W), t_norm_val)], axis=1).astype(np.float32)
+        fi = np.stack(
+            [
+                h_log[None],
+                bathy_arr[None],
+                wu_arr[None],
+                wv_arr[None],
+                np.full((1, H, W), t_norm_val),
+            ],
+            axis=1,
+        ).astype(np.float32)
         fi_t = torch.as_tensor(fi).to(device)
         return (fi_t - fi_mean) / fi_std
 
     def norm_wind_in(wu_arr, wv_arr, t_norm_val):
-        wi = np.stack([wu_arr[None], wv_arr[None],
-                       np.full((1, H, W), t_norm_val)], axis=1).astype(np.float32)
+        wi = np.stack([wu_arr[None], wv_arr[None], np.full((1, H, W), t_norm_val)], axis=1).astype(
+            np.float32
+        )
         wi_t = torch.as_tensor(wi).to(device)
         return (wi_t - wi_mean) / wi_std
 
@@ -158,11 +166,11 @@ def surrogate_rollout(
         return wt_phys.cpu().numpy()[0, 0], wt_phys.cpu().numpy()[0, 1]
 
     # Initialise with solver's t=0 state
-    h_cur  = result_solver["flood"][0]
+    h_cur = result_solver["flood"][0]
     wu_cur = result_solver["wind_u"][0]
     wv_cur = result_solver["wind_v"][0]
 
-    flood_pred  = [h_cur.copy()]
+    flood_pred = [h_cur.copy()]
     flood_lower = [None]
     flood_upper = [None]
 
@@ -192,7 +200,7 @@ def surrogate_rollout(
             flood_lower.append(lower)
             flood_upper.append(upper)
 
-            h_cur  = h_next
+            h_cur = h_next
             wu_cur = wu_next
             wv_cur = wv_next
 
@@ -207,8 +215,10 @@ def surrogate_rollout(
 # Main comparison
 # ---------------------------------------------------------------------------
 
+
 def run_comparison(args) -> None:
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
@@ -247,28 +257,30 @@ def run_comparison(args) -> None:
         # Rel-L2 at peak flood snapshot (skip t=0)
         solver_flood = result_solver["flood"]
         peak_t = int(np.argmax(solver_flood[1:].max(axis=(1, 2)))) + 1
-        pred_t  = torch.as_tensor(flood_pred[peak_t][None, None])
+        pred_t = torch.as_tensor(flood_pred[peak_t][None, None])
         truth_t = torch.as_tensor(solver_flood[peak_t][None, None])
         l2 = relative_l2_error(pred_t, truth_t).item()
         l2s.append(l2)
 
         log.info(
-            f"  Scenario {i+1:2d}:  solver={t_solver:.2f}s  "
+            f"  Scenario {i + 1:2d}:  solver={t_solver:.2f}s  "
             f"surrogate={t_surr:.3f}s  "
             f"speedup={speedup:.1f}×  "
             f"rel-L2={l2:.4f}"
         )
 
         if i < args.n_plot:
-            results_to_plot.append({
-                "bathy": bathy,
-                "solver": solver_flood,
-                "pred": flood_pred,
-                "lower": flood_lower,
-                "upper": flood_upper,
-                "peak_t": peak_t,
-                "times_h": result_solver["times_h"],
-            })
+            results_to_plot.append(
+                {
+                    "bathy": bathy,
+                    "solver": solver_flood,
+                    "pred": flood_pred,
+                    "lower": flood_lower,
+                    "upper": flood_upper,
+                    "peak_t": peak_t,
+                    "times_h": result_solver["times_h"],
+                }
+            )
 
     log.info(
         f"\nSummary ({args.n} scenarios):\n"
@@ -304,8 +316,7 @@ def run_comparison(args) -> None:
 
         # Col 1: solver flood
         ax = axes[row, 1]
-        im = ax.imshow(res["solver"][peak_t], origin="lower", cmap="Blues",
-                       vmin=0, vmax=vmax_flood)
+        im = ax.imshow(res["solver"][peak_t], origin="lower", cmap="Blues", vmin=0, vmax=vmax_flood)
         ax.contour(bathy, levels=[0], colors="gray", linewidths=0.6)
         ax.set_title(f"{col_titles[1]}\nt={t_h:.1f}h" if row == 0 else f"t={t_h:.1f}h", fontsize=9)
         ax.axis("off")
@@ -313,10 +324,12 @@ def run_comparison(args) -> None:
 
         # Col 2: surrogate flood
         ax = axes[row, 2]
-        im = ax.imshow(res["pred"][peak_t], origin="lower", cmap="Blues",
-                       vmin=0, vmax=vmax_flood)
+        im = ax.imshow(res["pred"][peak_t], origin="lower", cmap="Blues", vmin=0, vmax=vmax_flood)
         ax.contour(bathy, levels=[0], colors="gray", linewidths=0.6)
-        ax.set_title(f"{col_titles[2]}\nrel-L2={l2s[row]:.4f}" if row == 0 else f"rel-L2={l2s[row]:.4f}", fontsize=9)
+        ax.set_title(
+            f"{col_titles[2]}\nrel-L2={l2s[row]:.4f}" if row == 0 else f"rel-L2={l2s[row]:.4f}",
+            fontsize=9,
+        )
         ax.axis("off")
         plt.colorbar(im, ax=ax, fraction=0.046, label="m")
 
@@ -331,7 +344,7 @@ def run_comparison(args) -> None:
         if not args.no_conformal and res["upper"] is not None:
             ax = axes[row, 4]
             # Width = upper - pred, shown only over flooded cells
-            unc = (res["upper"][peak_t - 1] - res["pred"][peak_t])
+            unc = res["upper"][peak_t - 1] - res["pred"][peak_t]
             unc = np.maximum(unc, 0.0)
             flood_mask = res["pred"][peak_t] > 0.01
             unc[~flood_mask] = 0.0
@@ -360,10 +373,10 @@ def run_comparison(args) -> None:
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description="Benchmark hurricane flood surrogate vs SWE solver")
     p.add_argument("--checkpoint_dir", default="checkpoints")
-    p.add_argument("--device",         default="cpu")
-    p.add_argument("--n",              type=int, default=10)
-    p.add_argument("--n_plot",         type=int, default=3)
-    p.add_argument("--seed",           type=int, default=999)
-    p.add_argument("--output",         default="results/compare.png")
-    p.add_argument("--no_conformal",   action="store_true")
+    p.add_argument("--device", default="cpu")
+    p.add_argument("--n", type=int, default=10)
+    p.add_argument("--n_plot", type=int, default=3)
+    p.add_argument("--seed", type=int, default=999)
+    p.add_argument("--output", default="results/compare.png")
+    p.add_argument("--no_conformal", action="store_true")
     run_comparison(p.parse_args())

@@ -3,7 +3,8 @@
 
 """Hyperparameter tuning wrapper around Optuna."""
 
-from typing import Any, Callable, Dict, Optional
+from collections.abc import Callable
+from typing import Any
 
 
 class HyperparameterTuner:
@@ -26,7 +27,7 @@ class HyperparameterTuner:
         self,
         n_trials: int = 50,
         direction: str = "minimize",
-        study_name: Optional[str] = None,
+        study_name: str | None = None,
         use_hyperband: bool = True,
     ) -> None:
         self.n_trials = n_trials
@@ -34,7 +35,7 @@ class HyperparameterTuner:
         self.study_name = study_name
         self.use_hyperband = use_hyperband
 
-    def suggest_fno_params(self, trial: Any) -> Dict[str, Any]:
+    def suggest_fno_params(self, trial: Any) -> dict[str, Any]:
         """Suggest FNO hyperparameters for an Optuna trial.
 
         Parameters
@@ -53,7 +54,7 @@ class HyperparameterTuner:
             "batch_size": trial.suggest_categorical("batch_size", [8, 16, 32]),
         }
 
-    def optimize(self, objective_fn: Callable[[Any], float]) -> Dict[str, Any]:
+    def optimize(self, objective_fn: Callable[[Any], float]) -> dict[str, Any]:
         """Run the Optuna optimisation loop.
 
         Parameters

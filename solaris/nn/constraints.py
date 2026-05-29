@@ -8,7 +8,6 @@ satisfy the physical law, regardless of network weights. This is fundamentally
 different from soft PDE loss penalties that only penalise violations.
 """
 
-
 import torch
 import torch.nn as nn
 
@@ -57,7 +56,7 @@ class DivergenceFreeProjection2d(nn.Module):
         # Wavenumber grids
         kx = torch.fft.fftfreq(H, device=u.device).reshape(H, 1)
         ky = torch.fft.rfftfreq(W, device=u.device).reshape(1, W // 2 + 1)
-        k2 = kx ** 2 + ky ** 2
+        k2 = kx**2 + ky**2
 
         # Projection: û_⊥ = û − (k·û / |k|²) k
         k2_safe = k2.clamp(min=self.eps)
@@ -89,9 +88,7 @@ class ConservationProjection(nn.Module):
         Numerical floor to avoid division by zero.
     """
 
-    def __init__(
-        self, source_channel: int = 0, output_channel: int = 0, eps: float = 1e-8
-    ) -> None:
+    def __init__(self, source_channel: int = 0, output_channel: int = 0, eps: float = 1e-8) -> None:
         super().__init__()
         self.source_channel = source_channel
         self.output_channel = output_channel
@@ -148,7 +145,7 @@ class SpectralBandFilter(nn.Module):
 
         kx = torch.fft.fftfreq(H, device=x.device).reshape(H, 1)
         ky = torch.fft.rfftfreq(W, device=x.device).reshape(1, W // 2 + 1)
-        k_mag = (kx ** 2 + ky ** 2).sqrt()
+        k_mag = (kx**2 + ky**2).sqrt()
         k_max = k_mag.max()
 
         band_edges = torch.linspace(0, k_max.item(), self.n_bands + 1, device=x.device)
@@ -190,7 +187,7 @@ class CurlFreeProjection2d(nn.Module):
 
         kx = torch.fft.fftfreq(H, device=u.device).reshape(H, 1)
         ky = torch.fft.rfftfreq(W, device=u.device).reshape(1, W // 2 + 1)
-        k2 = kx ** 2 + ky ** 2
+        k2 = kx**2 + ky**2
 
         k2_safe = k2.clamp(min=self.eps)
         k_dot_u = kx * ux_ft + ky * uy_ft
@@ -269,8 +266,8 @@ class DirichletBCLayer(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x.clone()
         bv = self.boundary_values
-        x[:, :, 0, :]  = bv[:, :, 0, :]
+        x[:, :, 0, :] = bv[:, :, 0, :]
         x[:, :, -1, :] = bv[:, :, -1, :]
-        x[:, :, :, 0]  = bv[:, :, :, 0]
+        x[:, :, :, 0] = bv[:, :, :, 0]
         x[:, :, :, -1] = bv[:, :, :, -1]
         return x

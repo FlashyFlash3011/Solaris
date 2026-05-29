@@ -33,8 +33,8 @@ from torch.utils.data import DataLoader, TensorDataset
 # Allow importing from project directories
 sys.path.insert(0, str(Path(__file__).parent.parent / "projects" / "chip_thermal"))
 
-from solaris.models import FNO, NeuralResidualCorrector
 from solaris.metrics import relative_l2_error
+from solaris.models import FNO, NeuralResidualCorrector
 from solaris.utils import get_logger
 
 
@@ -50,11 +50,10 @@ def make_coarse_solver(n_iter: int, tol: float = 1e-3):
         # Fallback: trivial Laplacian smoother if chip_thermal not on path
         def solve_heat(Q, max_iter=10, tol=1e-3):
             import torch.nn.functional as F_
+
             T = Q.clone()
             for _ in range(max_iter):
-                T = F_.avg_pool2d(
-                    T.unsqueeze(0).unsqueeze(0), 3, stride=1, padding=1
-                ).squeeze()
+                T = F_.avg_pool2d(T.unsqueeze(0).unsqueeze(0), 3, stride=1, padding=1).squeeze()
             return T, 0, max_iter
 
     def coarse_solver(x: torch.Tensor) -> torch.Tensor:
@@ -82,6 +81,7 @@ def generate_data(n: int, res: int, seed: int = 0):
         log.warning("chip_thermal solver not found — using synthetic Gaussian data")
         rng = np.random.default_rng(seed)
         from scipy.ndimage import gaussian_filter
+
         Q_all, T_all = [], []
         for _ in range(n):
             Q = np.abs(rng.standard_normal((res, res))).astype(np.float32)
@@ -103,7 +103,7 @@ def generate_data(n: int, res: int, seed: int = 0):
         Q_all.append(Q)
         T_all.append(T)
         if (i + 1) % max(1, n // 5) == 0:
-            log.info(f"  {i+1}/{n}")
+            log.info(f"  {i + 1}/{n}")
     return np.stack(Q_all)[:, None].astype(np.float32), np.stack(T_all)[:, None].astype(np.float32)
 
 
@@ -135,16 +135,22 @@ def run(args):
 
     # ── Model A: pure FNO surrogate ──
     fno = FNO(
-        in_channels=1, out_channels=1,
-        hidden_channels=args.hidden, n_layers=args.n_layers,
-        modes=args.modes, dim=2,
+        in_channels=1,
+        out_channels=1,
+        hidden_channels=args.hidden,
+        n_layers=args.n_layers,
+        modes=args.modes,
+        dim=2,
     ).to(device)
 
     # ── Model B: NeuralResidualCorrector ──
     corrector = NeuralResidualCorrector(
         solver=coarse,
-        in_channels=1, out_channels=1, solver_out_channels=1,
-        hidden_channels=args.hidden, n_layers=args.n_layers,
+        in_channels=1,
+        out_channels=1,
+        solver_out_channels=1,
+        hidden_channels=args.hidden,
+        n_layers=args.n_layers,
         modes=args.modes,
     ).to(device)
 
@@ -195,13 +201,11 @@ def run(args):
     # Correction diagnostics
     x_sample, _ = next(iter(val_dl))
     diag = corrector.correction_diagnostics(x_sample.to(device))
-    log.info(f"\nCorrection magnitude analysis:")
+    log.info("\nCorrection magnitude analysis:")
     log.info(f"  Coarse solution norm:  {diag['coarse_norm']:.4f}")
     log.info(f"  Neural correction norm:{diag['correction_norm']:.4f}")
     log.info(f"  Relative correction:   {diag['relative_correction']:.4f}")
-    log.info(
-        "(Relative correction < 0.1 means the net only needs to fix <10% of the solution)"
-    )
+    log.info("(Relative correction < 0.1 means the net only needs to fix <10% of the solution)")
 
 
 if __name__ == "__main__":

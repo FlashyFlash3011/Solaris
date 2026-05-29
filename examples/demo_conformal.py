@@ -34,6 +34,7 @@ from solaris.utils import get_logger
 
 def synthetic_darcy(n: int, res: int, seed: int = 0):
     from scipy.ndimage import gaussian_filter
+
     rng = np.random.default_rng(seed)
     K_all, P_all = [], []
     for _ in range(n):
@@ -52,7 +53,7 @@ def run(args):
     device = torch.device(
         args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu"
     )
-    log.info(f"Device: {device}  |  Target coverage: {(1-args.alpha)*100:.0f}%")
+    log.info(f"Device: {device}  |  Target coverage: {(1 - args.alpha) * 100:.0f}%")
 
     total = args.n_train + args.n_cal + args.n_test
     K, P = synthetic_darcy(total, args.res)
@@ -69,8 +70,9 @@ def run(args):
     train_dl = DataLoader(TensorDataset(train_K, train_P), batch_size=16, shuffle=True)
 
     # ── Step 1: train a standard FNO ──
-    fno = FNO(in_channels=1, out_channels=1, hidden_channels=32, n_layers=4,
-              modes=12, dim=2).to(device)
+    fno = FNO(in_channels=1, out_channels=1, hidden_channels=32, n_layers=4, modes=12, dim=2).to(
+        device
+    )
     log.info(f"FNO parameters: {fno.num_parameters():,}")
     log.info("Training FNO …")
     opt = torch.optim.AdamW(fno.parameters(), lr=1e-3, weight_decay=1e-4)
@@ -80,7 +82,8 @@ def run(args):
         for x, y in train_dl:
             x, y = x.to(device), y.to(device)
             loss = nn.functional.mse_loss(fno(x), y)
-            opt.zero_grad(); loss.backward()
+            opt.zero_grad()
+            loss.backward()
             torch.nn.utils.clip_grad_norm_(fno.parameters(), 1.0)
             opt.step()
         sch.step()
@@ -117,8 +120,9 @@ def run(args):
     lo, hi, pt = predictor.predict(x_demo)
     for i in range(3):
         width = (hi[i] - lo[i]).mean().item()
-        log.info(f"  Sample {i}: point_pred_mean={pt[i].mean().item():.4f}  "
-                 f"interval_width={width:.4f}")
+        log.info(
+            f"  Sample {i}: point_pred_mean={pt[i].mean().item():.4f}  interval_width={width:.4f}"
+        )
 
 
 if __name__ == "__main__":
@@ -129,6 +133,7 @@ if __name__ == "__main__":
     p.add_argument("--n_cal", type=int, default=100)
     p.add_argument("--n_test", type=int, default=100)
     p.add_argument("--epochs", type=int, default=15)
-    p.add_argument("--alpha", type=float, default=0.1,
-                   help="Miscoverage rate: 0.1 → 90%% coverage guarantee")
+    p.add_argument(
+        "--alpha", type=float, default=0.1, help="Miscoverage rate: 0.1 → 90%% coverage guarantee"
+    )
     run(p.parse_args())

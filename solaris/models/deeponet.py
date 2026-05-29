@@ -3,14 +3,11 @@
 
 """Deep Operator Network (DeepONet) — Lu et al., 2021."""
 
-from typing import List
-
 import torch
 import torch.nn as nn
 
 from solaris.core.meta import ModelMetaData
 from solaris.core.module import Module
-
 
 _ACT_MAP = {
     "relu": nn.ReLU,
@@ -22,7 +19,7 @@ _ACT_MAP = {
 
 def _build_mlp(in_dim: int, out_dim: int, hidden: int, n_layers: int, act: str) -> nn.Sequential:
     act_cls = _ACT_MAP[act]
-    layers: List[nn.Module] = [nn.Linear(in_dim, hidden), act_cls()]
+    layers: list[nn.Module] = [nn.Linear(in_dim, hidden), act_cls()]
     for _ in range(n_layers - 2):
         layers += [nn.Linear(hidden, hidden), act_cls()]
     layers.append(nn.Linear(hidden, out_dim))
@@ -100,9 +97,9 @@ class DeepONet(Module):
         -------
         torch.Tensor  shape (B, Q)
         """
-        b = self.branch(u)   # (B, p)
-        t = self.trunk(y)    # (Q, p)
-        out = b @ t.T        # (B, Q)
+        b = self.branch(u)  # (B, p)
+        t = self.trunk(y)  # (Q, p)
+        out = b @ t.T  # (B, Q)
         if self.bias is not None:
             out = out + self.bias
         return out

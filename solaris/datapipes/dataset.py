@@ -3,8 +3,8 @@
 
 """Dataset and DataLoader wrappers for physics simulation data."""
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -31,10 +31,10 @@ class PhysicsDataset(Dataset):
 
     def __init__(
         self,
-        data_dir: Union[str, Path],
-        transforms: Optional[List[Callable]] = None,
-        in_keys: Optional[List[str]] = None,
-        out_keys: Optional[List[str]] = None,
+        data_dir: str | Path,
+        transforms: list[Callable] | None = None,
+        in_keys: list[str] | None = None,
+        out_keys: list[str] | None = None,
     ) -> None:
         super().__init__()
         self.data_dir = Path(data_dir)
@@ -48,7 +48,7 @@ class PhysicsDataset(Dataset):
     def __len__(self) -> int:
         return len(self.files)
 
-    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
         arr = np.load(self.files[idx], allow_pickle=True).item()
         # Support both dict-of-arrays and raw array formats
         if isinstance(arr, dict):
@@ -82,7 +82,7 @@ class TensorDataset(Dataset):
         self,
         inputs: torch.Tensor,
         targets: torch.Tensor,
-        transforms: Optional[List[Callable]] = None,
+        transforms: list[Callable] | None = None,
     ) -> None:
         assert len(inputs) == len(targets), "inputs and targets must have same first dimension"
         self.inputs = inputs
@@ -92,7 +92,7 @@ class TensorDataset(Dataset):
     def __len__(self) -> int:
         return len(self.inputs)
 
-    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
         sample = {"input": self.inputs[idx], "target": self.targets[idx]}
         for t in self.transforms:
             sample = t(sample)
@@ -116,10 +116,10 @@ class HDF5Dataset(Dataset):
 
     def __init__(
         self,
-        path: Union[str, Path],
+        path: str | Path,
         input_key: str = "input",
         target_key: str = "target",
-        transforms: Optional[List[Callable]] = None,
+        transforms: list[Callable] | None = None,
     ) -> None:
         super().__init__()
         try:
@@ -136,11 +136,12 @@ class HDF5Dataset(Dataset):
     def __len__(self) -> int:
         return self._len
 
-    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
         import h5py
+
         with h5py.File(self.path, "r") as f:
             sample = {
-                "input":  torch.as_tensor(f[self.input_key][idx],  dtype=torch.float32),
+                "input": torch.as_tensor(f[self.input_key][idx], dtype=torch.float32),
                 "target": torch.as_tensor(f[self.target_key][idx], dtype=torch.float32),
             }
         for t in self.transforms:

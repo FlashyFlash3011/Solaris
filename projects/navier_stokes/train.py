@@ -29,8 +29,8 @@ from torch.utils.data import DataLoader, TensorDataset
 sys.path.insert(0, str(Path(__file__).parent))
 from solver import random_vorticity_ic, solve_ns  # noqa: E402
 
-from solaris.models.fno import FNO
 from solaris.metrics import relative_l2_error
+from solaris.models.fno import FNO
 from solaris.utils import get_logger, save_checkpoint
 
 
@@ -63,11 +63,11 @@ def generate_dataset(
             inputs.append(snaps[t_idx])
             targets.append(snaps[t_idx + forecast_steps])
         if (i + 1) % max(1, n_sims // 5) == 0:
-            log.info(f"  {i+1}/{n_sims} — {time.perf_counter()-t0:.1f}s")
+            log.info(f"  {i + 1}/{n_sims} — {time.perf_counter() - t0:.1f}s")
 
-    inputs_arr = torch.stack(inputs).unsqueeze(1).numpy()   # (N, 1, H, W)
+    inputs_arr = torch.stack(inputs).unsqueeze(1).numpy()  # (N, 1, H, W)
     targets_arr = torch.stack(targets).unsqueeze(1).numpy()
-    log.info(f"Dataset: {len(inputs)} pairs, {time.perf_counter()-t0:.1f}s total")
+    log.info(f"Dataset: {len(inputs)} pairs, {time.perf_counter() - t0:.1f}s total")
     return inputs_arr.astype(np.float32), targets_arr.astype(np.float32)
 
 
@@ -86,8 +86,14 @@ def train(args):
         inputs_arr, targets_arr = d["inputs"], d["targets"]
     else:
         inputs_arr, targets_arr = generate_dataset(
-            args.n_sims, args.H, args.W, args.nu, args.dt,
-            args.n_steps, args.forecast_steps, seed=42,
+            args.n_sims,
+            args.H,
+            args.W,
+            args.nu,
+            args.dt,
+            args.n_steps,
+            args.forecast_steps,
+            seed=42,
         )
         cache.parent.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(cache, inputs=inputs_arr, targets=targets_arr)
@@ -101,8 +107,13 @@ def train(args):
 
     ckpt_dir = Path(args.checkpoint_dir)
     ckpt_dir.mkdir(parents=True, exist_ok=True)
-    np.savez(ckpt_dir / "norm_stats.npz",
-             in_mean=in_mean, in_std=in_std, tgt_mean=tgt_mean, tgt_std=tgt_std)
+    np.savez(
+        ckpt_dir / "norm_stats.npz",
+        in_mean=in_mean,
+        in_std=in_std,
+        tgt_mean=tgt_mean,
+        tgt_std=tgt_std,
+    )
 
     n_total = len(inputs_norm)
     n_train = int(n_total * 0.8)
@@ -110,15 +121,16 @@ def train(args):
     tgt_t = torch.as_tensor(targets_norm, dtype=torch.float32)
 
     train_ds = TensorDataset(inp_t[:n_train], tgt_t[:n_train])
-    val_ds   = TensorDataset(inp_t[n_train:], tgt_t[n_train:])
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
-                              pin_memory=(device.type == "cuda"))
-    val_loader   = DataLoader(val_ds,   batch_size=args.batch_size,
-                              pin_memory=(device.type == "cuda"))
+    val_ds = TensorDataset(inp_t[n_train:], tgt_t[n_train:])
+    train_loader = DataLoader(
+        train_ds, batch_size=args.batch_size, shuffle=True, pin_memory=(device.type == "cuda")
+    )
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size, pin_memory=(device.type == "cuda"))
 
     # ── Model ──
     model = FNO(
-        in_channels=1, out_channels=1,
+        in_channels=1,
+        out_channels=1,
         hidden_channels=args.hidden,
         n_layers=args.n_layers,
         modes=args.modes,
@@ -128,9 +140,7 @@ def train(args):
 
     # Optional divergence-free constraint (vorticity is scalar; use as a
     # spectral band filter demonstration)
-    constraint = None
     if args.constraint == "divergence_free":
-        from solaris.nn import DivergenceFreeProjection2d
         log.info("Note: divergence-free constraint not applicable to scalar vorticity — skipping.")
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
@@ -161,9 +171,9 @@ def train(args):
                 xb, yb = xb.to(device), yb.to(device)
                 pred = model(xb)
                 val_loss += loss_fn(pred, yb).item() * len(xb)
-                val_l2   += relative_l2_error(pred, yb).item() * len(xb)
+                val_l2 += relative_l2_error(pred, yb).item() * len(xb)
         val_loss /= len(val_ds)
-        val_l2   /= len(val_ds)
+        val_l2 /= len(val_ds)
 
         log.info(
             f"Epoch {epoch:3d}/{args.epochs} | "
@@ -175,7 +185,11 @@ def train(args):
             best_val = val_loss
             save_checkpoint(
                 ckpt_dir / "best_fno.pt",
-                model, optimizer, scheduler, epoch, val_loss,
+                model,
+                optimizer,
+                scheduler,
+                epoch,
+                val_loss,
                 extra={"H": args.H, "W": args.W, "nu": args.nu},
             )
 
@@ -184,21 +198,21 @@ def train(args):
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description="Train FNO on 2-D Navier-Stokes vorticity")
-    p.add_argument("--device",          default="cpu")
-    p.add_argument("--H",               type=int,   default=64)
-    p.add_argument("--W",               type=int,   default=64)
-    p.add_argument("--nu",              type=float, default=1e-3)
-    p.add_argument("--dt",              type=float, default=0.01)
-    p.add_argument("--n_steps",         type=int,   default=20)
-    p.add_argument("--forecast_steps",  type=int,   default=4)
-    p.add_argument("--n_sims",          type=int,   default=100)
-    p.add_argument("--epochs",          type=int,   default=50)
-    p.add_argument("--batch_size",      type=int,   default=32)
-    p.add_argument("--lr",              type=float, default=1e-3)
-    p.add_argument("--hidden",          type=int,   default=64)
-    p.add_argument("--modes",           type=int,   default=16)
-    p.add_argument("--n_layers",        type=int,   default=4)
-    p.add_argument("--constraint",      default="none", choices=["none", "divergence_free"])
-    p.add_argument("--cache",           default="data/ns_dataset.npz")
-    p.add_argument("--checkpoint_dir",  default="checkpoints")
+    p.add_argument("--device", default="cpu")
+    p.add_argument("--H", type=int, default=64)
+    p.add_argument("--W", type=int, default=64)
+    p.add_argument("--nu", type=float, default=1e-3)
+    p.add_argument("--dt", type=float, default=0.01)
+    p.add_argument("--n_steps", type=int, default=20)
+    p.add_argument("--forecast_steps", type=int, default=4)
+    p.add_argument("--n_sims", type=int, default=100)
+    p.add_argument("--epochs", type=int, default=50)
+    p.add_argument("--batch_size", type=int, default=32)
+    p.add_argument("--lr", type=float, default=1e-3)
+    p.add_argument("--hidden", type=int, default=64)
+    p.add_argument("--modes", type=int, default=16)
+    p.add_argument("--n_layers", type=int, default=4)
+    p.add_argument("--constraint", default="none", choices=["none", "divergence_free"])
+    p.add_argument("--cache", default="data/ns_dataset.npz")
+    p.add_argument("--checkpoint_dir", default="checkpoints")
     train(p.parse_args())

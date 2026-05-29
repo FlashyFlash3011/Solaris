@@ -10,8 +10,8 @@ import torch
 
 from solaris.datapipes.transforms import SymmetryAugmentation
 
-
 # --- SymmetryAugmentation ---
+
 
 @pytest.mark.parametrize("H,W", [(32, 32), (16, 24)])
 def test_symmetry_augmentation_shape(H, W):
@@ -46,6 +46,7 @@ def test_symmetry_augmentation_no_transform():
 
 
 # --- HDF5Dataset ---
+
 
 @pytest.mark.skipif(
     not pytest.importorskip("h5py", reason="h5py not installed"),

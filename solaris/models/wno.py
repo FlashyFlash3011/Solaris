@@ -4,7 +4,6 @@
 """Wavelet Neural Operator (WNO) — Tripura & Chakraborty, 2022."""
 
 import math
-from typing import List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -36,7 +35,7 @@ class WaveletConv2d(nn.Module):
         self.out_channels = out_channels
 
         # Haar 1-D filters
-        lo = torch.tensor([1.0, 1.0]) / math.sqrt(2)   # (2,)
+        lo = torch.tensor([1.0, 1.0]) / math.sqrt(2)  # (2,)
         hi = torch.tensor([1.0, -1.0]) / math.sqrt(2)  # (2,)
 
         # Build 2-D separable analysis kernels via outer product → (1, 1, 2, 2) each
@@ -47,15 +46,15 @@ class WaveletConv2d(nn.Module):
         self.register_buffer("analysis_filters", torch.cat([ll, lh, hl, hh], dim=0))  # (4,1,2,2)
 
         # Learnable mixing weights for the 4 subbands
-        self.weights = nn.ParameterList([
-            nn.Parameter(torch.empty(out_channels, in_channels, 1, 1)) for _ in range(4)
-        ])
+        self.weights = nn.ParameterList(
+            [nn.Parameter(torch.empty(out_channels, in_channels, 1, 1)) for _ in range(4)]
+        )
         for w in self.weights:
             nn.init.kaiming_uniform_(w, a=math.sqrt(5))
 
         self.bypass = nn.Conv2d(in_channels, out_channels, 1)
 
-    def _dwt(self, x: torch.Tensor) -> Tuple[torch.Tensor, ...]:
+    def _dwt(self, x: torch.Tensor) -> tuple[torch.Tensor, ...]:
         """Single-level 2-D Haar DWT. Returns (LL, LH, HL, HH)."""
         B, C, H, W = x.shape
         # Group-wise convolution: apply each of the 4 filters to all channels
@@ -66,7 +65,9 @@ class WaveletConv2d(nn.Module):
         out = out.reshape(B, C, 4, H // 2, W // 2)
         return out[:, :, 0], out[:, :, 1], out[:, :, 2], out[:, :, 3]
 
-    def _idwt(self, ll: torch.Tensor, lh: torch.Tensor, hl: torch.Tensor, hh: torch.Tensor) -> torch.Tensor:
+    def _idwt(
+        self, ll: torch.Tensor, lh: torch.Tensor, hl: torch.Tensor, hh: torch.Tensor
+    ) -> torch.Tensor:
         """Single-level 2-D Haar iDWT."""
         B, C, H, W = ll.shape
         # Stack subbands (B, C*4, H, W) and upsample via transpose conv
@@ -81,7 +82,7 @@ class WaveletConv2d(nn.Module):
 
         # Multi-level DWT
         ll = x
-        detail_stack: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = []
+        detail_stack: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = []
         for _ in range(self.levels):
             ll, lh, hl, hh = self._dwt(ll)
             detail_stack.append((lh, hl, hh))
@@ -139,14 +140,16 @@ class WNO(Module):
         super().__init__(meta=self._meta)
         self.padding = padding
         self.lift = nn.Conv2d(in_channels, hidden_channels, 1)
-        self.blocks = nn.ModuleList([
-            nn.Sequential(
-                WaveletConv2d(hidden_channels, hidden_channels, levels=levels),
-                nn.InstanceNorm2d(hidden_channels),
-                nn.GELU(),
-            )
-            for _ in range(n_layers)
-        ])
+        self.blocks = nn.ModuleList(
+            [
+                nn.Sequential(
+                    WaveletConv2d(hidden_channels, hidden_channels, levels=levels),
+                    nn.InstanceNorm2d(hidden_channels),
+                    nn.GELU(),
+                )
+                for _ in range(n_layers)
+            ]
+        )
         self.proj = nn.Sequential(
             nn.Conv2d(hidden_channels, hidden_channels * 4, 1),
             nn.GELU(),

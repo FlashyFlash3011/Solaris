@@ -4,12 +4,11 @@
 """Logging utilities — thin wrapper around loguru for consistent formatting."""
 
 import sys
-from typing import Optional
 
 from loguru import logger as _logger
 
 
-def get_logger(name: Optional[str] = None, level: str = "INFO"):
+def get_logger(name: str | None = None, level: str = "INFO"):
     """Return a configured loguru logger.
 
     Parameters

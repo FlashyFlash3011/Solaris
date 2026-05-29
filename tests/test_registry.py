@@ -16,9 +16,18 @@ def test_registry_contains_known_models():
     registry = ModelRegistry()
     # These are registered in pyproject.toml entry points
     known = [
-        "fno", "afno", "mlp", "wno", "uno", "deeponet",
-        "constrained_fno", "multiscale_fno", "coupled_operator",
-        "conformal", "residual_corrector", "meshgraphnet",
+        "fno",
+        "afno",
+        "mlp",
+        "wno",
+        "uno",
+        "deeponet",
+        "constrained_fno",
+        "multiscale_fno",
+        "coupled_operator",
+        "conformal",
+        "residual_corrector",
+        "meshgraphnet",
     ]
     registered = registry.list_models()
     for name in known:
@@ -31,6 +40,7 @@ def test_registry_lookup_returns_class():
     assert callable(FNO)
     # Should be instantiable
     import torch
+
     model = FNO(in_channels=1, out_channels=1, hidden_channels=8, n_layers=1, modes=4, dim=2)
     out = model(torch.randn(1, 1, 16, 16))
     assert out.shape == (1, 1, 16, 16)

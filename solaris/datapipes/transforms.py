@@ -4,7 +4,6 @@
 """Common data transforms for physics field data."""
 
 import random
-from typing import Dict, Optional, Tuple, Union
 
 import torch
 
@@ -27,8 +26,8 @@ class Normalize:
     def __init__(
         self,
         keys: list,
-        mean: Optional[Union[float, torch.Tensor]] = None,
-        std: Optional[Union[float, torch.Tensor]] = None,
+        mean: float | torch.Tensor | None = None,
+        std: float | torch.Tensor | None = None,
         eps: float = 1e-6,
     ) -> None:
         self.keys = keys
@@ -36,7 +35,7 @@ class Normalize:
         self.std = std
         self.eps = eps
 
-    def __call__(self, sample: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def __call__(self, sample: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         for k in self.keys:
             if k not in sample:
                 continue
@@ -50,11 +49,11 @@ class Normalize:
 class RandomCrop2d:
     """Random spatial crop for 2-D field data (..., H, W)."""
 
-    def __init__(self, keys: list, crop_size: Tuple[int, int]) -> None:
+    def __init__(self, keys: list, crop_size: tuple[int, int]) -> None:
         self.keys = keys
         self.crop_h, self.crop_w = crop_size
 
-    def __call__(self, sample: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def __call__(self, sample: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         # Determine crop coordinates from first matching key
         h = w = None
         for k in self.keys:
@@ -75,11 +74,13 @@ class RandomCrop2d:
 class ToDevice:
     """Move all tensors in a sample dict to the specified device."""
 
-    def __init__(self, device: Union[str, torch.device]) -> None:
+    def __init__(self, device: str | torch.device) -> None:
         self.device = torch.device(device)
 
-    def __call__(self, sample: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        return {k: v.to(self.device) if isinstance(v, torch.Tensor) else v for k, v in sample.items()}
+    def __call__(self, sample: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        return {
+            k: v.to(self.device) if isinstance(v, torch.Tensor) else v for k, v in sample.items()
+        }
 
 
 class SymmetryAugmentation:
@@ -100,13 +101,15 @@ class SymmetryAugmentation:
         Probability of a vertical flip (up-down).
     """
 
-    def __init__(self, keys: list, p_rot: float = 0.5, p_flip_h: float = 0.5, p_flip_v: float = 0.5) -> None:
+    def __init__(
+        self, keys: list, p_rot: float = 0.5, p_flip_h: float = 0.5, p_flip_v: float = 0.5
+    ) -> None:
         self.keys = keys
         self.p_rot = p_rot
         self.p_flip_h = p_flip_h
         self.p_flip_v = p_flip_v
 
-    def __call__(self, sample: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def __call__(self, sample: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         k_rot = random.randint(0, 3) if random.random() < self.p_rot else 0
         do_flip_h = random.random() < self.p_flip_h
         do_flip_v = random.random() < self.p_flip_v
@@ -132,7 +135,7 @@ class AddGaussianNoise:
         self.keys = keys
         self.std = std
 
-    def __call__(self, sample: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def __call__(self, sample: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         for k in self.keys:
             if k in sample:
                 sample[k] = sample[k] + torch.randn_like(sample[k]) * self.std

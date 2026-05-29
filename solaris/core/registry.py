@@ -4,7 +4,7 @@
 """Model registry with entry-point discovery."""
 
 from importlib.metadata import entry_points
-from typing import Dict, Optional, Type
+from typing import Optional
 
 from solaris.core.module import Module
 
@@ -20,7 +20,7 @@ class ModelRegistry:
     """
 
     _instance: Optional["ModelRegistry"] = None
-    _registry: Dict[str, Type[Module]] = {}
+    _registry: dict[str, type[Module]] = {}
 
     def __new__(cls) -> "ModelRegistry":
         if cls._instance is None:
@@ -35,13 +35,14 @@ class ModelRegistry:
                 self._registry[ep.name] = ep.load()
             except Exception as exc:  # noqa: BLE001
                 import warnings
+
                 warnings.warn(f"Failed to load model entry point '{ep.name}': {exc}", stacklevel=2)
 
-    def register(self, name: str, cls: Type[Module]) -> None:
+    def register(self, name: str, cls: type[Module]) -> None:
         """Manually register a model class."""
         self._registry[name] = cls
 
-    def __getitem__(self, name: str) -> Type[Module]:
+    def __getitem__(self, name: str) -> type[Module]:
         if name not in self._registry:
             raise KeyError(f"Model '{name}' not found. Available: {list(self._registry)}")
         return self._registry[name]

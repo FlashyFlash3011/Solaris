@@ -3,8 +3,6 @@
 
 """Adaptive Fourier Neural Operator (AFNO) — Guibas et al., 2022."""
 
-from typing import Tuple
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -16,7 +14,9 @@ from solaris.core.module import Module
 class AFNOMixingBlock(nn.Module):
     """Frequency-domain token mixing block used in AFNO."""
 
-    def __init__(self, hidden_size: int, num_blocks: int = 8, sparsity_threshold: float = 0.01) -> None:
+    def __init__(
+        self, hidden_size: int, num_blocks: int = 8, sparsity_threshold: float = 0.01
+    ) -> None:
         super().__init__()
         assert hidden_size % num_blocks == 0, "hidden_size must be divisible by num_blocks"
         self.hidden_size = hidden_size
@@ -44,27 +44,27 @@ class AFNOMixingBlock(nn.Module):
         x = x.reshape(B, x.shape[1], x.shape[2], self.num_blocks, self.block_size)
 
         o1_real = (
-            torch.einsum("...bi,bio->...bo", x.real, self.w1[0]) -
-            torch.einsum("...bi,bio->...bo", x.imag, self.w1[1]) +
-            self.b1[0]
+            torch.einsum("...bi,bio->...bo", x.real, self.w1[0])
+            - torch.einsum("...bi,bio->...bo", x.imag, self.w1[1])
+            + self.b1[0]
         )
         o1_imag = (
-            torch.einsum("...bi,bio->...bo", x.imag, self.w1[0]) +
-            torch.einsum("...bi,bio->...bo", x.real, self.w1[1]) +
-            self.b1[1]
+            torch.einsum("...bi,bio->...bo", x.imag, self.w1[0])
+            + torch.einsum("...bi,bio->...bo", x.real, self.w1[1])
+            + self.b1[1]
         )
         o1 = F.softshrink(torch.stack([o1_real, o1_imag], dim=-1), lambd=self.sparsity_threshold)
         o1 = torch.view_as_complex(o1)
 
         o2_real = (
-            torch.einsum("...bi,bio->...bo", o1.real, self.w2[0]) -
-            torch.einsum("...bi,bio->...bo", o1.imag, self.w2[1]) +
-            self.b2[0]
+            torch.einsum("...bi,bio->...bo", o1.real, self.w2[0])
+            - torch.einsum("...bi,bio->...bo", o1.imag, self.w2[1])
+            + self.b2[0]
         )
         o2_imag = (
-            torch.einsum("...bi,bio->...bo", o1.imag, self.w2[0]) +
-            torch.einsum("...bi,bio->...bo", o1.real, self.w2[1]) +
-            self.b2[1]
+            torch.einsum("...bi,bio->...bo", o1.imag, self.w2[0])
+            + torch.einsum("...bi,bio->...bo", o1.real, self.w2[1])
+            + self.b2[1]
         )
 
         x = torch.stack([o2_real, o2_imag], dim=-1)
@@ -132,7 +132,7 @@ class AFNO(Module):
         self,
         in_channels: int,
         out_channels: int,
-        img_size: Tuple[int, int] = (64, 64),
+        img_size: tuple[int, int] = (64, 64),
         patch_size: int = 4,
         hidden_size: int = 256,
         n_layers: int = 4,
@@ -148,18 +148,25 @@ class AFNO(Module):
         self.patch_embed = nn.Conv2d(in_channels, hidden_size, patch_size, stride=patch_size)
         self.pos_embed = nn.Parameter(torch.zeros(1, nh * nw, hidden_size))
         nn.init.trunc_normal_(self.pos_embed, std=0.02)
-        self.blocks = nn.ModuleList([AFNOBlock(hidden_size, mlp_ratio, num_blocks) for _ in range(n_layers)])
+        self.blocks = nn.ModuleList(
+            [AFNOBlock(hidden_size, mlp_ratio, num_blocks) for _ in range(n_layers)]
+        )
         self.norm = nn.LayerNorm(hidden_size)
         self.head = nn.ConvTranspose2d(hidden_size, out_channels, patch_size, stride=patch_size)
         self._capture_init_args(
-            in_channels=in_channels, out_channels=out_channels, img_size=img_size,
-            patch_size=patch_size, hidden_size=hidden_size, n_layers=n_layers,
-            mlp_ratio=mlp_ratio, num_blocks=num_blocks,
+            in_channels=in_channels,
+            out_channels=out_channels,
+            img_size=img_size,
+            patch_size=patch_size,
+            hidden_size=hidden_size,
+            n_layers=n_layers,
+            mlp_ratio=mlp_ratio,
+            num_blocks=num_blocks,
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, C, H, W = x.shape
-        x = self.patch_embed(x)         # (B, hidden, H/p, W/p)
+        x = self.patch_embed(x)  # (B, hidden, H/p, W/p)
         x = x.flatten(2).transpose(1, 2)  # (B, n_patches, hidden)
         x = x + self.pos_embed
         nh, nw = H // self.patch_size, W // self.patch_size

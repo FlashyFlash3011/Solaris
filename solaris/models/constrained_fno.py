@@ -22,8 +22,6 @@ Supported constraints
     No constraint — identical to standard FNO.
 """
 
-from typing import List
-
 import torch
 import torch.nn as nn
 
@@ -60,7 +58,7 @@ class ConstrainedFNO(Module):
         out_channels: int,
         hidden_channels: int = 64,
         n_layers: int = 4,
-        modes: int | List[int] = 12,
+        modes: int | list[int] = 12,
         constraint: str = "divergence_free",
     ) -> None:
         super().__init__(meta=self._meta)
@@ -87,9 +85,7 @@ class ConstrainedFNO(Module):
             )
             self.constraint_layer: nn.Module = DivergenceFreeProjection2d()
         elif constraint == "conservative":
-            self.constraint_layer = ConservationProjection(
-                source_channel=0, output_channel=0
-            )
+            self.constraint_layer = ConservationProjection(source_channel=0, output_channel=0)
         elif constraint == "none":
             self.constraint_layer = nn.Identity()
         else:

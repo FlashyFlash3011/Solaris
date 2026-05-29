@@ -90,7 +90,9 @@ def compare(args):
 
         rng2 = np.random.default_rng(9999)
         u0_vis, v0_vis = random_gaussian_ic(H, W, rng=rng2)
-        u_snaps, _ = solve_wave_snapshots(u0_vis, v0_vis, c=1.0, dt=5e-4, n_steps=400, n_snapshots=4)
+        u_snaps, _ = solve_wave_snapshots(
+            u0_vis, v0_vis, c=1.0, dt=5e-4, n_steps=400, n_snapshots=4
+        )
 
         fig, axes = plt.subplots(2, 4, figsize=(14, 6))
         vmax = np.abs(u_snaps).max()
@@ -105,9 +107,7 @@ def compare(args):
         # Bottom row: FNO one-step predictions from each snapshot
         for col in range(len(u_snaps)):
             t_ch_c = build_timestep_channel(col * 0.2, H, W).numpy()
-            inp_c = np.concatenate([u_snaps[col][None],
-                                    np.zeros((1, H, W)),
-                                    t_ch_c], axis=0)[None]
+            inp_c = np.concatenate([u_snaps[col][None], np.zeros((1, H, W)), t_ch_c], axis=0)[None]
             inp_c_norm = (inp_c - in_mean) / in_std
             with torch.no_grad():
                 pr_n = model(torch.as_tensor(inp_c_norm, dtype=torch.float32).to(device))
@@ -130,8 +130,8 @@ def compare(args):
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
-    p.add_argument("--device",          default="cpu")
-    p.add_argument("--checkpoint_dir",  default="checkpoints")
-    p.add_argument("--n_test",          type=int, default=20)
-    p.add_argument("--output",          default="comparison.png")
+    p.add_argument("--device", default="cpu")
+    p.add_argument("--checkpoint_dir", default="checkpoints")
+    p.add_argument("--n_test", type=int, default=20)
+    p.add_argument("--output", default="comparison.png")
     compare(p.parse_args())

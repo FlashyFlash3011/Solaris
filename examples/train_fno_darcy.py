@@ -14,12 +14,13 @@ Distributed (e.g. 2 GPUs):
 """
 
 import argparse
+
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
+from solaris.metrics import relative_l2_error
 from solaris.models.fno import FNO
-from solaris.metrics import relative_l2_error, rmse
 from solaris.utils import get_logger, save_checkpoint
 
 
@@ -48,7 +49,9 @@ def main():
     args = parser.parse_args()
 
     log = get_logger("train_fno_darcy")
-    device = torch.device(args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu")
+    device = torch.device(
+        args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu"
+    )
     log.info(f"Using device: {device}")
 
     # Data
@@ -57,11 +60,20 @@ def main():
     n_train = 400
     train_ds = TensorDataset(k[:n_train], p[:n_train])
     val_ds = TensorDataset(k[n_train:], p[n_train:])
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, pin_memory=device.type == "cuda")
+    train_loader = DataLoader(
+        train_ds, batch_size=args.batch_size, shuffle=True, pin_memory=device.type == "cuda"
+    )
     val_loader = DataLoader(val_ds, batch_size=args.batch_size)
 
     # Model
-    model = FNO(in_channels=1, out_channels=1, hidden_channels=args.hidden, n_layers=args.n_layers, modes=args.modes, dim=2)
+    model = FNO(
+        in_channels=1,
+        out_channels=1,
+        hidden_channels=args.hidden,
+        n_layers=args.n_layers,
+        modes=args.modes,
+        dim=2,
+    )
     model = model.to(device)
     log.info(f"Model: {model.meta.name} | Parameters: {model.num_parameters():,}")
 
@@ -97,11 +109,16 @@ def main():
         val_loss /= len(val_ds)
         val_rel_l2 /= len(val_ds)
 
-        log.info(f"Epoch {epoch:3d} | train_loss={train_loss:.4e} | val_loss={val_loss:.4e} | rel_L2={val_rel_l2:.4f}")
+        log.info(
+            f"Epoch {epoch:3d} | train_loss={train_loss:.4e} | val_loss={val_loss:.4e}"
+            f" | rel_L2={val_rel_l2:.4f}"
+        )
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            save_checkpoint(f"{args.checkpoint_dir}/best_fno.pt", model, optimizer, scheduler, epoch, val_loss)
+            save_checkpoint(
+                f"{args.checkpoint_dir}/best_fno.pt", model, optimizer, scheduler, epoch, val_loss
+            )
 
     log.info(f"Training complete. Best val loss: {best_val_loss:.4e}")
 

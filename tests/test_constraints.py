@@ -1,13 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024, Contributors
 # SPDX-License-Identifier: Apache-2.0
 
-import torch
 import pytest
+import torch
+
 from solaris.nn import (
-    DivergenceFreeProjection2d,
     CurlFreeProjection2d,
-    NeumannBCLayer,
     DirichletBCLayer,
+    DivergenceFreeProjection2d,
+    NeumannBCLayer,
 )
 
 

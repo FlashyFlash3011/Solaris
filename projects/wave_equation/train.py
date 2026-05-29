@@ -28,8 +28,8 @@ from torch.utils.data import DataLoader, TensorDataset
 sys.path.insert(0, str(Path(__file__).parent))
 from solver import random_gaussian_ic, solve_wave_snapshots  # noqa: E402
 
-from solaris.models.fno import FNO
 from solaris.metrics import relative_l2_error
+from solaris.models.fno import FNO
 from solaris.nn.embeddings import SinusoidalTimestepEmbedding
 from solaris.utils import get_logger, save_checkpoint
 
@@ -78,21 +78,24 @@ def generate_dataset(
         for t_idx in range(n_snapshots - 1):
             t_phys = t_idx * dt_snap
             t_ch = build_timestep_channel(t_phys, H, W).numpy()
-            inp = np.concatenate([
-                u_snaps[t_idx:t_idx+1],
-                v_snaps[t_idx:t_idx+1],
-                t_ch,
-            ], axis=0)  # (3, H, W)
-            tgt = u_snaps[t_idx + 1:t_idx + 2]  # (1, H, W)
+            inp = np.concatenate(
+                [
+                    u_snaps[t_idx : t_idx + 1],
+                    v_snaps[t_idx : t_idx + 1],
+                    t_ch,
+                ],
+                axis=0,
+            )  # (3, H, W)
+            tgt = u_snaps[t_idx + 1 : t_idx + 2]  # (1, H, W)
             inputs_list.append(inp)
             targets_list.append(tgt)
 
         if (i + 1) % max(1, n_sims // 5) == 0:
-            log.info(f"  {i+1}/{n_sims} — {time.perf_counter()-t0:.1f}s")
+            log.info(f"  {i + 1}/{n_sims} — {time.perf_counter() - t0:.1f}s")
 
     inputs_arr = np.stack(inputs_list).astype(np.float32)
     targets_arr = np.stack(targets_list).astype(np.float32)
-    log.info(f"Dataset: {len(inputs_arr)} pairs, {time.perf_counter()-t0:.1f}s")
+    log.info(f"Dataset: {len(inputs_arr)} pairs, {time.perf_counter() - t0:.1f}s")
     return inputs_arr, targets_arr
 
 
@@ -111,8 +114,14 @@ def train(args):
         inputs_arr, targets_arr = d["inputs"], d["targets"]
     else:
         inputs_arr, targets_arr = generate_dataset(
-            args.n_sims, args.H, args.W, args.c,
-            args.dt, args.n_steps, args.n_snapshots, seed=42,
+            args.n_sims,
+            args.H,
+            args.W,
+            args.c,
+            args.dt,
+            args.n_steps,
+            args.n_snapshots,
+            seed=42,
         )
         cache.parent.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(cache, inputs=inputs_arr, targets=targets_arr)
@@ -125,8 +134,13 @@ def train(args):
 
     ckpt_dir = Path(args.checkpoint_dir)
     ckpt_dir.mkdir(parents=True, exist_ok=True)
-    np.savez(ckpt_dir / "norm_stats.npz",
-             in_mean=in_mean, in_std=in_std, tgt_mean=tgt_mean, tgt_std=tgt_std)
+    np.savez(
+        ckpt_dir / "norm_stats.npz",
+        in_mean=in_mean,
+        in_std=in_std,
+        tgt_mean=tgt_mean,
+        tgt_std=tgt_std,
+    )
 
     n_total = len(inputs_norm)
     n_train = int(n_total * 0.8)
@@ -134,15 +148,16 @@ def train(args):
     tgt_t = torch.as_tensor(targets_norm, dtype=torch.float32)
 
     train_ds = TensorDataset(inp_t[:n_train], tgt_t[:n_train])
-    val_ds   = TensorDataset(inp_t[n_train:], tgt_t[n_train:])
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
-                              pin_memory=(device.type == "cuda"))
-    val_loader   = DataLoader(val_ds,   batch_size=args.batch_size,
-                              pin_memory=(device.type == "cuda"))
+    val_ds = TensorDataset(inp_t[n_train:], tgt_t[n_train:])
+    train_loader = DataLoader(
+        train_ds, batch_size=args.batch_size, shuffle=True, pin_memory=(device.type == "cuda")
+    )
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size, pin_memory=(device.type == "cuda"))
 
     # ── Model: 3 input channels (u, v, t_embed), 1 output (u_next) ──
     model = FNO(
-        in_channels=3, out_channels=1,
+        in_channels=3,
+        out_channels=1,
         hidden_channels=args.hidden,
         n_layers=args.n_layers,
         modes=args.modes,
@@ -178,9 +193,9 @@ def train(args):
                 xb, yb = xb.to(device), yb.to(device)
                 pred = model(xb)
                 val_loss += loss_fn(pred, yb).item() * len(xb)
-                val_l2   += relative_l2_error(pred, yb).item() * len(xb)
+                val_l2 += relative_l2_error(pred, yb).item() * len(xb)
         val_loss /= len(val_ds)
-        val_l2   /= len(val_ds)
+        val_l2 /= len(val_ds)
 
         log.info(
             f"Epoch {epoch:3d}/{args.epochs} | "
@@ -192,7 +207,11 @@ def train(args):
             best_val = val_loss
             save_checkpoint(
                 ckpt_dir / "best_wave_fno.pt",
-                model, optimizer, scheduler, epoch, val_loss,
+                model,
+                optimizer,
+                scheduler,
+                epoch,
+                val_loss,
                 extra={"H": args.H, "W": args.W, "c": args.c},
             )
 
@@ -201,20 +220,20 @@ def train(args):
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description="Train FNO on 2-D wave equation")
-    p.add_argument("--device",          default="cpu")
-    p.add_argument("--H",               type=int,   default=64)
-    p.add_argument("--W",               type=int,   default=64)
-    p.add_argument("--c",               type=float, default=1.0,  help="Wave speed")
-    p.add_argument("--dt",              type=float, default=5e-4, help="Solver time step")
-    p.add_argument("--n_steps",         type=int,   default=400,  help="Solver steps per sim")
-    p.add_argument("--n_snapshots",     type=int,   default=10,   help="Snapshots per sim")
-    p.add_argument("--n_sims",          type=int,   default=100)
-    p.add_argument("--epochs",          type=int,   default=50)
-    p.add_argument("--batch_size",      type=int,   default=32)
-    p.add_argument("--lr",              type=float, default=1e-3)
-    p.add_argument("--hidden",          type=int,   default=64)
-    p.add_argument("--modes",           type=int,   default=16)
-    p.add_argument("--n_layers",        type=int,   default=4)
-    p.add_argument("--cache",           default="data/wave_dataset.npz")
-    p.add_argument("--checkpoint_dir",  default="checkpoints")
+    p.add_argument("--device", default="cpu")
+    p.add_argument("--H", type=int, default=64)
+    p.add_argument("--W", type=int, default=64)
+    p.add_argument("--c", type=float, default=1.0, help="Wave speed")
+    p.add_argument("--dt", type=float, default=5e-4, help="Solver time step")
+    p.add_argument("--n_steps", type=int, default=400, help="Solver steps per sim")
+    p.add_argument("--n_snapshots", type=int, default=10, help="Snapshots per sim")
+    p.add_argument("--n_sims", type=int, default=100)
+    p.add_argument("--epochs", type=int, default=50)
+    p.add_argument("--batch_size", type=int, default=32)
+    p.add_argument("--lr", type=float, default=1e-3)
+    p.add_argument("--hidden", type=int, default=64)
+    p.add_argument("--modes", type=int, default=16)
+    p.add_argument("--n_layers", type=int, default=4)
+    p.add_argument("--cache", default="data/wave_dataset.npz")
+    p.add_argument("--checkpoint_dir", default="checkpoints")
     train(p.parse_args())

@@ -35,7 +35,6 @@ python train.py --device cpu --n_train 200 --epochs 20
 
 import argparse
 import sys
-import time
 from pathlib import Path
 
 import numpy as np
@@ -47,17 +46,18 @@ from torch.utils.data import DataLoader, TensorDataset
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+from solver import generate_dataset, solve_heat_fd
+
+from solaris.metrics import relative_l2_error
 from solaris.models.constrained_fno import ConstrainedFNO
 from solaris.models.fno import FNO
 from solaris.models.residual_corrector import NeuralResidualCorrector
-from solaris.metrics import relative_l2_error
 from solaris.utils import get_logger, save_checkpoint
 from solaris.utils.training import EarlyStopping, GradientClipper, WarmupCosineScheduler
 from solaris.utils.tuner import HyperparameterTuner
-from solver import generate_dataset, solve_heat_fd
-
 
 # ─── DP Phase 1c: Mode curriculum ────────────────────────────────────────────
+
 
 class ModeCurriculumScheduler:
     """DP-based curriculum: gradually unlock Fourier modes during training.
@@ -114,8 +114,10 @@ class ModeCurriculumScheduler:
 
 # ─── DP Phase 2: Coarse FD solver for NeuralResidualCorrector ────────────────
 
-def make_coarse_solver(Q_mean: float, Q_std: float, T_mean: float, T_std: float,
-                       coarse_factor: int = 4):
+
+def make_coarse_solver(
+    Q_mean: float, Q_std: float, T_mean: float, T_std: float, coarse_factor: int = 4
+):
     """Return a batched coarse FD solver for NeuralResidualCorrector.
 
     Runs the heat equation at 1/coarse_factor resolution (H//4 × W//4) then
@@ -125,22 +127,25 @@ def make_coarse_solver(Q_mean: float, Q_std: float, T_mean: float, T_std: float,
     The solver receives and returns *normalised* tensors so it fits seamlessly
     into the normalised training pipeline.
     """
+
     def _batched_solver(Q_batch: torch.Tensor) -> torch.Tensor:
         B, _, H, W = Q_batch.shape
         # Denormalise Q → physical W/m²
-        Q_phys = Q_batch.detach().cpu() * Q_std + Q_mean          # (B,1,H,W)
+        Q_phys = Q_batch.detach().cpu() * Q_std + Q_mean  # (B,1,H,W)
         # Downscale via average pooling
-        Q_coarse = F.avg_pool2d(Q_phys, kernel_size=coarse_factor,
-                                stride=coarse_factor)               # (B,1,Hc,Wc)
-        Q_np = Q_coarse.numpy()[:, 0]                              # (B,Hc,Wc)
+        Q_coarse = F.avg_pool2d(
+            Q_phys, kernel_size=coarse_factor, stride=coarse_factor
+        )  # (B,1,Hc,Wc)
+        Q_np = Q_coarse.numpy()[:, 0]  # (B,Hc,Wc)
         # Solve at coarse resolution
         T_np = np.empty_like(Q_np)
         for i in range(B):
             T_np[i], _ = solve_heat_fd(Q_np[i])
         # Upscale T back to (H, W)
         T_coarse_t = torch.as_tensor(T_np[:, None], dtype=torch.float32)
-        T_up = F.interpolate(T_coarse_t, size=(H, W),
-                             mode="bilinear", align_corners=False)  # (B,1,H,W)
+        T_up = F.interpolate(
+            T_coarse_t, size=(H, W), mode="bilinear", align_corners=False
+        )  # (B,1,H,W)
         # Normalise T → same space as training targets
         T_norm = (T_up - T_mean) / T_std
         return T_norm.to(Q_batch.device)
@@ -150,29 +155,41 @@ def make_coarse_solver(Q_mean: float, Q_std: float, T_mean: float, T_std: float,
 
 # ─── Model factory ───────────────────────────────────────────────────────────
 
-def build_model(model_type: str, hidden: int, n_layers: int, modes: int,
-                grad_ckpt: bool, coarse_solver=None):
+
+def build_model(
+    model_type: str, hidden: int, n_layers: int, modes: int, grad_ckpt: bool, coarse_solver=None
+):
     """Instantiate the requested model variant."""
     if model_type == "fno":
         return FNO(
-            in_channels=1, out_channels=1,
-            hidden_channels=hidden, n_layers=n_layers,
-            modes=modes, dim=2,
+            in_channels=1,
+            out_channels=1,
+            hidden_channels=hidden,
+            n_layers=n_layers,
+            modes=modes,
+            dim=2,
             gradient_checkpointing=grad_ckpt,
         )
     elif model_type == "constrained":
         return ConstrainedFNO(
-            in_channels=1, out_channels=1,
-            hidden_channels=hidden, n_layers=n_layers,
-            modes=modes, constraint="conservative",
+            in_channels=1,
+            out_channels=1,
+            hidden_channels=hidden,
+            n_layers=n_layers,
+            modes=modes,
+            constraint="conservative",
         )
     elif model_type == "residual":
         assert coarse_solver is not None, "coarse_solver required for residual model"
         return NeuralResidualCorrector(
             solver=coarse_solver,
-            in_channels=1, out_channels=1, solver_out_channels=1,
-            hidden_channels=hidden, n_layers=n_layers,
-            modes=modes, solver_detach=True,
+            in_channels=1,
+            out_channels=1,
+            solver_out_channels=1,
+            hidden_channels=hidden,
+            n_layers=n_layers,
+            modes=modes,
+            solver_detach=True,
         )
     else:
         raise ValueError(f"Unknown model type: {model_type!r}")
@@ -184,9 +201,15 @@ def ckpt_name(model_type: str) -> str:
 
 # ─── Core training run ───────────────────────────────────────────────────────
 
+
 def train_one_run(
-    model, model_type: str, train_loader, val_loader,
-    device, args, ckpt_dir: Path,
+    model,
+    model_type: str,
+    train_loader,
+    val_loader,
+    device,
+    args,
+    ckpt_dir: Path,
     optuna_trial=None,
 ) -> float:
     """Train *model* and return the best validation loss.
@@ -199,9 +222,7 @@ def train_one_run(
     log = get_logger("train")
     loss_fn = nn.MSELoss()
 
-    optimizer = torch.optim.AdamW(
-        model.parameters(), lr=args.lr, weight_decay=1e-4
-    )
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = WarmupCosineScheduler(
         optimizer,
         warmup_epochs=min(10, args.epochs // 10),
@@ -216,8 +237,11 @@ def train_one_run(
     curriculum = None
     if args.curriculum and hasattr(model, "set_modes"):
         curriculum = ModeCurriculumScheduler(
-            model, modes_start=4, modes_max=args.modes,
-            modes_step=4, unlock_every=30,
+            model,
+            modes_start=4,
+            modes_max=args.modes,
+            modes_step=4,
+            unlock_every=30,
         )
 
     best_val = float("inf")
@@ -225,7 +249,7 @@ def train_one_run(
     for epoch in range(1, args.epochs + 1):
         # ── Curriculum step ──
         if curriculum is not None:
-            active_modes = curriculum.step(epoch)
+            curriculum.step(epoch)
 
         # ── Train ──
         model.train()
@@ -250,17 +274,15 @@ def train_one_run(
                 Q_b, T_b = Q_b.to(device), T_b.to(device)
                 pred = model(Q_b)
                 val_loss += loss_fn(pred, T_b).item() * len(Q_b)
-                val_l2   += relative_l2_error(pred, T_b).item() * len(Q_b)
+                val_l2 += relative_l2_error(pred, T_b).item() * len(Q_b)
         val_loss /= len(val_loader.dataset)
-        val_l2   /= len(val_loader.dataset)
+        val_l2 /= len(val_loader.dataset)
 
         # ── Diagnostics for NeuralResidualCorrector ──
         if model_type == "residual" and epoch % 10 == 0:
             sample_Q = next(iter(train_loader))[0][:4].to(device)
             diag = model.correction_diagnostics(sample_Q)
-            log.info(
-                f"  residual diag | relative_correction={diag['relative_correction']:.4f}"
-            )
+            log.info(f"  residual diag | relative_correction={diag['relative_correction']:.4f}")
 
         mode_str = f" | modes={curriculum.active_modes}" if curriculum else ""
         log.info(
@@ -274,13 +296,17 @@ def train_one_run(
             best_val = val_loss
             save_checkpoint(
                 ckpt_dir / ckpt_name(model_type),
-                model, optimizer, None, epoch, val_loss,
+                model,
+                optimizer,
+                None,
+                epoch,
+                val_loss,
                 extra={
                     "hidden_channels": args.hidden,
-                    "n_layers":        args.n_layers,
-                    "modes":           args.modes,
-                    "resolution":      args.resolution,
-                    "model_type":      model_type,
+                    "n_layers": args.n_layers,
+                    "modes": args.modes,
+                    "resolution": args.resolution,
+                    "model_type": model_type,
                 },
             )
 
@@ -289,6 +315,7 @@ def train_one_run(
             optuna_trial.report(val_loss, step=epoch)
             try:
                 import optuna
+
                 if optuna_trial.should_prune():
                     raise optuna.exceptions.TrialPruned()
             except ImportError:
@@ -303,6 +330,7 @@ def train_one_run(
 
 
 # ─── DP Phase 3b: Knapsack mode profiling ────────────────────────────────────
+
 
 def profile_mode_accuracy(args, train_loader, val_loader, device) -> int:
     """Run 5-epoch mini-trains at each candidate mode count.
@@ -325,9 +353,12 @@ def profile_mode_accuracy(args, train_loader, val_loader, device) -> int:
 
     for modes in candidates:
         model = FNO(
-            in_channels=1, out_channels=1,
-            hidden_channels=args.hidden, n_layers=args.n_layers,
-            modes=modes, dim=2,
+            in_channels=1,
+            out_channels=1,
+            hidden_channels=args.hidden,
+            n_layers=args.n_layers,
+            modes=modes,
+            dim=2,
         ).to(device)
         opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
         for _ in range(5):
@@ -379,12 +410,15 @@ def profile_mode_accuracy(args, train_loader, val_loader, device) -> int:
             break
 
     optimal_modes = steps[optimal_idx]
-    log.info(f"Knapsack DP → optimal modes_max = {optimal_modes}  "
-             f"(marginal gain at next step: {gains.get(steps[min(optimal_idx+1, n-1)], 0):.4f})")
+    log.info(
+        f"Knapsack DP → optimal modes_max = {optimal_modes}  "
+        f"(marginal gain at next step: {gains.get(steps[min(optimal_idx + 1, n - 1)], 0):.4f})"
+    )
     return optimal_modes
 
 
 # ─── Main training entry point ────────────────────────────────────────────────
+
 
 def train(args):
     log = get_logger("train")
@@ -406,8 +440,8 @@ def train(args):
     d = np.load(data_path)
     Q_train = d["Q_train"]
     T_train = d["T_train"]
-    Q_val   = d["Q_test"]
-    T_val   = d["T_test"]
+    Q_val = d["Q_test"]
+    T_val = d["T_test"]
 
     H, W = Q_train.shape[1], Q_train.shape[2]
     log.info(f"Resolution: {H}×{W}  |  train: {len(Q_train)}  |  val: {len(Q_val)}")
@@ -415,20 +449,24 @@ def train(args):
     log.info(f"  T range [{T_train.min():.1f} °C, {T_train.max():.1f} °C]")
 
     # ── Normalise ──
-    Q_mean = float(Q_train.mean());  Q_std = float(Q_train.std()) + 1e-8
-    T_mean = float(T_train.mean());  T_std = float(T_train.std()) + 1e-8
+    Q_mean = float(Q_train.mean())
+    Q_std = float(Q_train.std()) + 1e-8
+    T_mean = float(T_train.mean())
+    T_std = float(T_train.std()) + 1e-8
 
     Q_tr_n = (Q_train - Q_mean) / Q_std
     T_tr_n = (T_train - T_mean) / T_std
-    Q_va_n = (Q_val   - Q_mean) / Q_std
-    T_va_n = (T_val   - T_mean) / T_std
+    Q_va_n = (Q_val - Q_mean) / Q_std
+    T_va_n = (T_val - T_mean) / T_std
 
     ckpt_dir = Path(args.checkpoint_dir)
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     np.savez(
         ckpt_dir / "norm_stats.npz",
-        Q_mean=Q_mean, Q_std=Q_std,
-        T_mean=T_mean, T_std=T_std,
+        Q_mean=Q_mean,
+        Q_std=Q_std,
+        T_mean=T_mean,
+        T_std=T_std,
     )
 
     # ── DataLoaders ──
@@ -438,12 +476,14 @@ def train(args):
             torch.as_tensor(T[:, None], dtype=torch.float32),
         )
         return DataLoader(
-            ds, batch_size=args.batch_size, shuffle=shuffle,
+            ds,
+            batch_size=args.batch_size,
+            shuffle=shuffle,
             pin_memory=(device.type == "cuda"),
         )
 
     train_loader = to_loader(Q_tr_n, T_tr_n, shuffle=True)
-    val_loader   = to_loader(Q_va_n, T_va_n, shuffle=False)
+    val_loader = to_loader(Q_va_n, T_va_n, shuffle=False)
 
     # ── DP Phase 3b: knapsack mode profiling ──
     if args.profile_modes:
@@ -454,18 +494,19 @@ def train(args):
     # ── DP Phase 1b: Hyperband hyperparameter tuning ──
     if args.tune:
         log.info("Starting Hyperband hyperparameter search …")
-        best_params = _run_tuning(args, train_loader, val_loader, device, ckpt_dir,
-                                   Q_mean, Q_std, T_mean, T_std)
+        best_params = _run_tuning(
+            args, train_loader, val_loader, device, ckpt_dir, Q_mean, Q_std, T_mean, T_std
+        )
         log.info(f"Best params: {best_params}")
         # Apply best params
-        args.hidden   = best_params.get("hidden_channels", args.hidden)
+        args.hidden = best_params.get("hidden_channels", args.hidden)
         args.n_layers = best_params.get("n_layers", args.n_layers)
-        args.modes    = best_params.get("modes", args.modes)
-        args.lr       = best_params.get("lr", args.lr)
+        args.modes = best_params.get("modes", args.modes)
+        args.lr = best_params.get("lr", args.lr)
         args.batch_size = best_params.get("batch_size", args.batch_size)
         # Rebuild loaders with tuned batch_size
         train_loader = to_loader(Q_tr_n, T_tr_n, shuffle=True)
-        val_loader   = to_loader(Q_va_n, T_va_n, shuffle=False)
+        val_loader = to_loader(Q_va_n, T_va_n, shuffle=False)
 
     # ── Build coarse solver (residual model only) ──
     coarse_solver = None
@@ -474,14 +515,23 @@ def train(args):
 
     # ── Model ──
     model = build_model(
-        args.model, args.hidden, args.n_layers, args.modes,
-        args.grad_ckpt, coarse_solver,
+        args.model,
+        args.hidden,
+        args.n_layers,
+        args.modes,
+        args.grad_ckpt,
+        coarse_solver,
     ).to(device)
     log.info(f"Model: {args.model}  |  parameters: {model.num_parameters():,}")
 
     best_val = train_one_run(
-        model, args.model, train_loader, val_loader,
-        device, args, ckpt_dir,
+        model,
+        args.model,
+        train_loader,
+        val_loader,
+        device,
+        args,
+        ckpt_dir,
     )
 
     log.info(f"Training complete. Best val loss: {best_val:.4e}")
@@ -490,47 +540,61 @@ def train(args):
 
 # ─── DP Phase 1b: Hyperband tuning helper ────────────────────────────────────
 
-def _run_tuning(args, train_loader, val_loader, device, ckpt_dir,
-                Q_mean, Q_std, T_mean, T_std) -> dict:
+
+def _run_tuning(
+    args, train_loader, val_loader, device, ckpt_dir, Q_mean, Q_std, T_mean, T_std
+) -> dict:
     """Run Hyperband-pruned Optuna study over FNO hyperparameters."""
-    log = get_logger("tune")
     coarse_solver = None
     if args.model == "residual":
         coarse_solver = make_coarse_solver(Q_mean, Q_std, T_mean, T_std, coarse_factor=4)
 
     def objective(trial):
         import copy
+
         tuner = HyperparameterTuner(use_hyperband=True)
         params = tuner.suggest_fno_params(trial)
 
         tune_args = copy.copy(args)
-        tune_args.hidden    = params["hidden_channels"]
-        tune_args.n_layers  = params["n_layers"]
-        tune_args.modes     = params["modes"]
-        tune_args.lr        = params["lr"]
+        tune_args.hidden = params["hidden_channels"]
+        tune_args.n_layers = params["n_layers"]
+        tune_args.modes = params["modes"]
+        tune_args.lr = params["lr"]
         tune_args.batch_size = params["batch_size"]
-        tune_args.epochs    = min(args.epochs, 40)  # short run for pruning
+        tune_args.epochs = min(args.epochs, 40)  # short run for pruning
         tune_args.curriculum = False  # disable curriculum during search
 
         def to_loader_local(Q, T, shuffle, bs):
             from torch.utils.data import DataLoader, TensorDataset
+
             ds = TensorDataset(
                 torch.as_tensor(Q[:, None], dtype=torch.float32),
                 torch.as_tensor(T[:, None], dtype=torch.float32),
             )
-            return DataLoader(ds, batch_size=bs, shuffle=shuffle,
-                              pin_memory=(device.type == "cuda"))
+            return DataLoader(
+                ds, batch_size=bs, shuffle=shuffle, pin_memory=(device.type == "cuda")
+            )
 
         # Rebuild loaders with trial batch_size (need access to raw arrays)
         # Use the existing loaders as proxies (batch_size mismatch OK for short run)
         model = build_model(
-            args.model, params["hidden_channels"], params["n_layers"],
-            params["modes"], False, coarse_solver,
+            args.model,
+            params["hidden_channels"],
+            params["n_layers"],
+            params["modes"],
+            False,
+            coarse_solver,
         ).to(device)
 
         return train_one_run(
-            model, args.model, train_loader, val_loader,
-            device, tune_args, ckpt_dir, optuna_trial=trial,
+            model,
+            args.model,
+            train_loader,
+            val_loader,
+            device,
+            tune_args,
+            ckpt_dir,
+            optuna_trial=trial,
         )
 
     tuner = HyperparameterTuner(
@@ -546,29 +610,48 @@ def _run_tuning(args, train_loader, val_loader, device, ckpt_dir,
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
-    p.add_argument("--device",         default="cuda")
-    p.add_argument("--resolution",     type=int,   default=128)
-    p.add_argument("--n_train",        type=int,   default=1000)
-    p.add_argument("--n_val",          type=int,   default=200)
-    p.add_argument("--epochs",         type=int,   default=200)
-    p.add_argument("--batch_size",     type=int,   default=16)
-    p.add_argument("--lr",             type=float, default=1e-3)
-    p.add_argument("--hidden",         type=int,   default=64)
-    p.add_argument("--modes",          type=int,   default=16)
-    p.add_argument("--n_layers",       type=int,   default=4)
+    p.add_argument("--device", default="cuda")
+    p.add_argument("--resolution", type=int, default=128)
+    p.add_argument("--n_train", type=int, default=1000)
+    p.add_argument("--n_val", type=int, default=200)
+    p.add_argument("--epochs", type=int, default=200)
+    p.add_argument("--batch_size", type=int, default=16)
+    p.add_argument("--lr", type=float, default=1e-3)
+    p.add_argument("--hidden", type=int, default=64)
+    p.add_argument("--modes", type=int, default=16)
+    p.add_argument("--n_layers", type=int, default=4)
     p.add_argument("--checkpoint_dir", default=str(Path(__file__).parent / "checkpoints"))
     # DP flags
-    p.add_argument("--model",          default="fno",
-                   choices=["fno", "constrained", "residual"],
-                   help="Model variant to train")
-    p.add_argument("--grad_ckpt",      action="store_true",
-                   help="Enable gradient checkpointing (saves VRAM for deep FNO stacks)")
-    p.add_argument("--curriculum",     action="store_true",
-                   help="Enable DP mode curriculum (starts at modes=4, unlocks every 30 epochs)")
-    p.add_argument("--tune",           action="store_true",
-                   help="Run Hyperband hyperparameter search before full training")
-    p.add_argument("--tune_trials",    type=int, default=20,
-                   help="Number of Optuna trials for hyperparameter search")
-    p.add_argument("--profile_modes",  action="store_true",
-                   help="Run knapsack DP mode profiling to find optimal modes_max")
+    p.add_argument(
+        "--model",
+        default="fno",
+        choices=["fno", "constrained", "residual"],
+        help="Model variant to train",
+    )
+    p.add_argument(
+        "--grad_ckpt",
+        action="store_true",
+        help="Enable gradient checkpointing (saves VRAM for deep FNO stacks)",
+    )
+    p.add_argument(
+        "--curriculum",
+        action="store_true",
+        help="Enable DP mode curriculum (starts at modes=4, unlocks every 30 epochs)",
+    )
+    p.add_argument(
+        "--tune",
+        action="store_true",
+        help="Run Hyperband hyperparameter search before full training",
+    )
+    p.add_argument(
+        "--tune_trials",
+        type=int,
+        default=20,
+        help="Number of Optuna trials for hyperparameter search",
+    )
+    p.add_argument(
+        "--profile_modes",
+        action="store_true",
+        help="Run knapsack DP mode profiling to find optimal modes_max",
+    )
     train(p.parse_args())

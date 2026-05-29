@@ -3,6 +3,7 @@
 
 """Solaris warning and exception hirarchy"""
 
+
 class SolarisWarning(UserWarning):
     """Base class for all warnings raised by solaris"""
 
@@ -12,10 +13,8 @@ class ExperimentalFeatureWarning(SolarisWarning):
 
 
 class FutureFeatureWarning(SolarisWarning):
-    """Behavior will change in a future release; Update your code now to avoid breakage in the future"""
+    """Behavior will change in a future release; update your code now to avoid breakage."""
 
 
 class LegacyFeatureWarning(SolarisWarning):
-    """Feature is deprecated and will be removed in a future release; Update your code now to avoid breakage in the future"""
-
-    
+    """Feature is deprecated and will be removed in a future release; update your code now."""

@@ -14,7 +14,6 @@ This is the "traditional way" — correct but slow.
 """
 
 import time
-from typing import List, Tuple
 
 import numpy as np
 
@@ -37,7 +36,7 @@ def solve_diffusion(
     t_end: float,
     alpha: float = ALPHA_WATER,
     n_snapshots: int = 8,
-) -> Tuple[np.ndarray, List[float], float, int]:
+) -> tuple[np.ndarray, list[float], float, int]:
     """Simulate heat diffusion from initial field T0 up to time t_end.
 
     Parameters
@@ -58,15 +57,16 @@ def solve_diffusion(
     dx = DOMAIN_SIZE / (W - 1)
     dt = stable_dt(dx, alpha)
     n_steps = int(np.ceil(t_end / dt))
-    dt = t_end / n_steps           # adjust so we land exactly on t_end
+    dt = t_end / n_steps  # adjust so we land exactly on t_end
 
-    r = alpha * dt / dx**2         # diffusion number (≤ 0.25 for stability)
+    r = alpha * dt / dx**2  # diffusion number (≤ 0.25 for stability)
 
     T = T0.copy().astype(np.float64)
-    T_amb = T[0, 0]                # boundary value = initial edge temp
+    T_amb = T[0, 0]  # boundary value = initial edge temp
 
-    snap_indices = set(int(round(i * (n_steps - 1) / (n_snapshots - 1)))
-                       for i in range(n_snapshots))
+    snap_indices = set(
+        int(round(i * (n_steps - 1) / (n_snapshots - 1))) for i in range(n_snapshots)
+    )
     snapshots, snap_times = [], []
 
     t0_wall = time.perf_counter()
@@ -75,11 +75,7 @@ def solve_diffusion(
             snapshots.append(T.copy().astype(np.float32))
             snap_times.append(step * dt)
 
-        lap = (
-            T[:-2, 1:-1] + T[2:, 1:-1] +
-            T[1:-1, :-2] + T[1:-1, 2:] -
-            4 * T[1:-1, 1:-1]
-        )
+        lap = T[:-2, 1:-1] + T[2:, 1:-1] + T[1:-1, :-2] + T[1:-1, 2:] - 4 * T[1:-1, 1:-1]
         T[1:-1, 1:-1] += r * lap
         T[0, :] = T[-1, :] = T[:, 0] = T[:, -1] = T_amb
 
@@ -123,7 +119,7 @@ def make_initial_field(
         cy = rng.uniform(0.2, 0.8)
         sigma = rng.uniform(spot_radius * 0.5, spot_radius * 1.5)
         amp = rng.uniform(0.5, 1.0) * (T_hot - T_ambient)
-        T += amp * np.exp(-((XX - cx)**2 + (YY - cy)**2) / (2 * sigma**2))
+        T += amp * np.exp(-((XX - cx) ** 2 + (YY - cy) ** 2) / (2 * sigma**2))
     # Fix boundary to ambient
     T[0, :] = T[-1, :] = T[:, 0] = T[:, -1] = T_ambient
     return T

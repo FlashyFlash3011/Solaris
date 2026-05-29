@@ -32,8 +32,6 @@ References
 Angelopoulos & Bates, "A Gentle Introduction to Conformal Prediction", 2021.
 """
 
-from typing import Optional, Tuple
-
 import torch
 import torch.nn as nn
 
@@ -119,7 +117,7 @@ class ConformalNeuralOperator(nn.Module):
     def predict(
         self,
         x: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Predict with calibrated uncertainty intervals.
 
         Parameters
@@ -167,9 +165,7 @@ class ConformalNeuralOperator(nn.Module):
             x_b = test_inputs[i : i + batch_size].to(device)
             y_b = test_targets[i : i + batch_size].to(device)
             lo, hi, _ = self.predict(x_b)
-            covered.append(
-                ((y_b >= lo) & (y_b <= hi)).flatten(1).all(dim=1).float().cpu()
-            )
+            covered.append(((y_b >= lo) & (y_b <= hi)).flatten(1).all(dim=1).float().cpu())
             widths.append((hi - lo).flatten(1).mean(dim=1).cpu())
 
         return {

@@ -12,10 +12,7 @@ Rewritten as a first-order system:
 with Dirichlet BCs: u = 0 on ∂Ω.
 """
 
-from typing import Optional, Tuple
-
 import numpy as np
-import torch
 
 
 def _laplacian_fd(u: np.ndarray, dx: float) -> np.ndarray:
@@ -23,7 +20,7 @@ def _laplacian_fd(u: np.ndarray, dx: float) -> np.ndarray:
     lap = np.zeros_like(u)
     lap[1:-1, 1:-1] = (
         u[2:, 1:-1] + u[:-2, 1:-1] + u[1:-1, 2:] + u[1:-1, :-2] - 4 * u[1:-1, 1:-1]
-    ) / dx ** 2
+    ) / dx**2
     return lap
 
 
@@ -34,7 +31,7 @@ def solve_wave(
     dx: float = 1.0 / 63,
     dt: float = 1e-3,
     n_steps: int = 200,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Integrate the wave equation via leapfrog (Verlet) scheme.
 
     Parameters
@@ -64,11 +61,12 @@ def solve_wave(
     cfl = c * dt / dx
     if cfl > 1.0 / np.sqrt(2):
         import warnings
+
         warnings.warn(f"CFL number {cfl:.3f} > 1/√2 — solution may be unstable.", stacklevel=2)
 
     for _ in range(n_steps):
         lap_u = _laplacian_fd(u, dx)
-        v_new = v + dt * c ** 2 * lap_u
+        v_new = v + dt * c**2 * lap_u
         u_new = u + dt * v_new
         # Dirichlet BCs
         u_new[0, :] = u_new[-1, :] = u_new[:, 0] = u_new[:, -1] = 0.0
@@ -86,7 +84,7 @@ def solve_wave_snapshots(
     dt: float = 1e-3,
     n_steps: int = 200,
     n_snapshots: int = 10,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Like ``solve_wave`` but returns evenly spaced snapshots of (u, v).
 
     Returns
@@ -102,7 +100,7 @@ def solve_wave_snapshots(
 
     for step in range(n_steps):
         lap_u = _laplacian_fd(u, dx)
-        v_new = v + dt * c ** 2 * lap_u
+        v_new = v + dt * c**2 * lap_u
         u_new = u + dt * v_new
         u_new[0, :] = u_new[-1, :] = u_new[:, 0] = u_new[:, -1] = 0.0
         v_new[0, :] = v_new[-1, :] = v_new[:, 0] = v_new[:, -1] = 0.0
@@ -122,8 +120,8 @@ def solve_wave_snapshots(
 def random_gaussian_ic(
     H: int = 64,
     W: int = 64,
-    rng: Optional[np.random.Generator] = None,
-) -> Tuple[np.ndarray, np.ndarray]:
+    rng: np.random.Generator | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
     """Random Gaussian-blob initial displacement, zero initial velocity.
 
     Returns
@@ -144,7 +142,7 @@ def random_gaussian_ic(
         cy = rng.uniform(0.2, 0.8)
         sigma = rng.uniform(0.05, 0.15)
         amp = rng.uniform(-1.0, 1.0)
-        u0 += amp * np.exp(-((XX - cx) ** 2 + (YY - cy) ** 2) / (2 * sigma ** 2))
+        u0 += amp * np.exp(-((XX - cx) ** 2 + (YY - cy) ** 2) / (2 * sigma**2))
 
     # Enforce Dirichlet BCs on IC
     u0[0, :] = u0[-1, :] = u0[:, 0] = u0[:, -1] = 0.0
@@ -161,8 +159,9 @@ if __name__ == "__main__":
 
     fig, axes = plt.subplots(1, 6, figsize=(18, 3))
     for i, ax in enumerate(axes):
-        im = ax.imshow(u_snaps[i], cmap="seismic", origin="lower",
-                       vmin=-u_snaps.max(), vmax=u_snaps.max())
+        im = ax.imshow(
+            u_snaps[i], cmap="seismic", origin="lower", vmin=-u_snaps.max(), vmax=u_snaps.max()
+        )
         ax.set_title(f"t={i}")
         ax.axis("off")
     plt.tight_layout()
