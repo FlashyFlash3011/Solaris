@@ -45,6 +45,13 @@ dev = [
     "ruff>=0.1.0",
     "pre-commit>=3.3.0",
 ]
+tuning = [
+    "optuna >= 3.0.0"
+]
+export = [
+    "onnx >= 1.14.0",
+    "onnnxruntime >= 1.16.0"
+]
 
 [project.entry-points."solaris.models"]
 fno = "solaris.models.fno:FNO"
