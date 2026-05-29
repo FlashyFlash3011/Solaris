@@ -3,7 +3,9 @@
 
 """Base Module class for all PhysicsNeMo models."""
 
+import functools
 import importlib
+import inspect
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +31,35 @@ class Module(nn.Module):
 
     _solaris_version: str = "0.1.0"
 
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Wrap each subclass __init__ to auto-capture constructor args.
+
+        If a subclass never calls ``_capture_init_args()`` manually, the wrapper
+        records all bound arguments (excluding ``self`` and ``meta``) after
+        ``__init__`` returns.  Manual calls to ``_capture_init_args()`` always
+        take precedence — auto-capture only fires when ``_init_args`` is still
+        empty at the end of construction.
+        """
+        super().__init_subclass__(**kwargs)
+        original_init = cls.__dict__.get("__init__")
+        if original_init is None:
+            return
+
+        @functools.wraps(original_init)
+        def _auto_capture_init(self: "Module", *args: Any, **kwargs: Any) -> None:
+            original_init(self, *args, **kwargs)
+            if not self._init_args:
+                sig = inspect.signature(original_init)
+                try:
+                    bound = sig.bind(self, *args, **kwargs)
+                    bound.apply_defaults()
+                except TypeError:
+                    return
+                captured = {k: v for k, v in bound.arguments.items() if k not in ("self", "meta")}
+                self._init_args = captured
+
+        cls.__init__ = _auto_capture_init
+
     def __init__(self, meta: ModelMetaData | None = None) -> None:
         super().__init__()
         self.meta = meta or ModelMetaData()
@@ -44,9 +75,14 @@ class Module(nn.Module):
     def _capture_init_args(self, **kwargs: Any) -> None:
         """Store constructor arguments for checkpoint serialisation.
 
-        Call this at the *end* of ``__init__`` in every subclass::
+        Manual override: call this at the *end* of ``__init__`` when args are not
+        JSON-serialisable or the auto-capture would record unwanted values::
 
             self._capture_init_args(in_channels=in_channels, ...)
+
+        If this is never called, :meth:`__init_subclass__` auto-populates
+        ``_init_args`` from the constructor's bound arguments after ``__init__``
+        returns.
         """
         self._init_args = kwargs
 

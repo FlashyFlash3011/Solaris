@@ -71,3 +71,39 @@ def test_from_torch():
 
     x = torch.randn(3, 4)
     torch.testing.assert_close(wrapper(x), inner(x))
+
+
+# --- Auto init-arg capture ---
+
+
+class AutoModel(Module):
+    """Subclass that never calls _capture_init_args() manually."""
+
+    def __init__(self, width: int = 32, depth: int = 4) -> None:
+        super().__init__(meta=ModelMetaData(name="AutoModel"))
+        self.linear = torch.nn.Linear(width, width)
+        # deliberately no _capture_init_args() call
+
+    def forward(self, x):
+        return self.linear(x)
+
+
+def test_auto_capture_populates_init_args():
+    model = AutoModel(width=8, depth=2)
+    assert model._init_args == {"width": 8, "depth": 2}
+
+
+def test_auto_capture_save_load(tmp_path):
+    model = AutoModel(width=8, depth=2)
+    path = tmp_path / "auto.pt"
+    model.save(path)
+    loaded = AutoModel.load(path, map_location="cpu")
+    x = torch.randn(2, 8)
+    torch.testing.assert_close(model(x), loaded(x))
+
+
+def test_manual_capture_takes_precedence():
+    """Manual _capture_init_args() overrides auto-capture."""
+    model = DummyModel(size=16)
+    # DummyModel calls _capture_init_args(size=size) — only "size" should be stored
+    assert set(model._init_args.keys()) == {"size"}
