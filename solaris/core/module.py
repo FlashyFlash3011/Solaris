@@ -190,6 +190,45 @@ class Module(nn.Module):
         wrapper = _Wrapper()
         return wrapper
 
+    def compile_model(
+        self,
+        mode: str = "reduce-overhead",
+        fullgraph: bool = False,
+        **kwargs: Any,
+    ) -> "Module":
+        """Compile this model with ``torch.compile`` and return ``self``.
+
+        Replaces ``self.forward`` with the compiled version in-place.
+        Subsequent calls to the model use the compiled forward graph.
+
+        Requires PyTorch >= 2.0.  For models with complex-valued spectral
+        operations (FNO, ConstrainedFNO, etc.), PyTorch >= 2.2 is recommended
+        to avoid fallback to eager for ``torch.fft`` ops.
+
+        Parameters
+        ----------
+        mode : str
+            Compilation mode passed to ``torch.compile``:
+
+            * ``"reduce-overhead"`` — default; best for repeated same-shape calls.
+            * ``"max-autotune"`` — maximum kernel fusion (slower compile, faster run).
+            * ``"default"`` — balanced.
+        fullgraph : bool
+            If ``True``, require the entire graph to be compilable (raises on
+            graph breaks rather than falling back to eager).
+        **kwargs :
+            Additional keyword arguments forwarded to ``torch.compile``.
+
+        Returns
+        -------
+        Module
+            ``self`` (for chaining).
+        """
+        self.forward = torch.compile(  # type: ignore[method-assign]
+            self.forward, mode=mode, fullgraph=fullgraph, **kwargs
+        )
+        return self
+
     def num_parameters(self) -> int:
         """Return total trainable parameter count."""
         return sum(p.numel() for p in self.parameters() if p.requires_grad)

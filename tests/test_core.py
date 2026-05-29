@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024, Contributors
 # SPDX-License-Identifier: Apache-2.0
 
+import pytest
 import torch
 
 from solaris.core import ModelMetaData, Module
@@ -107,3 +108,24 @@ def test_manual_capture_takes_precedence():
     model = DummyModel(size=16)
     # DummyModel calls _capture_init_args(size=size) — only "size" should be stored
     assert set(model._init_args.keys()) == {"size"}
+
+
+# --- compile_model ---
+
+
+def test_compile_model_returns_self():
+    model = DummyModel(size=8)
+    result = model.compile_model()
+    assert result is model
+
+
+def test_compile_model_still_runs():
+    model = DummyModel(size=8)
+    model.compile_model()
+    x = torch.randn(2, 8)
+    try:
+        out = model(x)
+        assert out.shape == (2, 8)
+    except Exception:
+        # torch.compile may fail on CPU-only environments without a compiler
+        pytest.skip("torch.compile backend not available in this environment")

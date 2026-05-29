@@ -3,8 +3,6 @@
 
 """Fourier Neural Operator (FNO) — Li et al., 2021."""
 
-from typing import List, Optional
-
 import torch
 import torch.nn as nn
 from torch.utils.checkpoint import checkpoint as grad_checkpoint
@@ -81,9 +79,11 @@ class FNO(Module):
         out_channels: int,
         hidden_channels: int = 64,
         n_layers: int = 4,
-        modes: int | List[int] = 12,
+        modes: int | list[int] = 12,
         dim: int = 2,
         gradient_checkpointing: bool = False,
+        compile: bool = False,
+        compile_mode: str = "reduce-overhead",
     ) -> None:
         super().__init__(meta=self._meta)
         assert dim in (1, 2, 3), "dim must be 1, 2, or 3"
@@ -91,16 +91,27 @@ class FNO(Module):
             modes = [modes] * dim
         self.dim = dim
         self.gradient_checkpointing = gradient_checkpointing
-        self.lift = nn.Conv1d(in_channels, hidden_channels, 1) if dim == 1 else (
-            nn.Conv2d(in_channels, hidden_channels, 1) if dim == 2 else
-            nn.Conv3d(in_channels, hidden_channels, 1)
+        self.lift = (
+            nn.Conv1d(in_channels, hidden_channels, 1)
+            if dim == 1
+            else (
+                nn.Conv2d(in_channels, hidden_channels, 1)
+                if dim == 2
+                else nn.Conv3d(in_channels, hidden_channels, 1)
+            )
         )
         if dim == 1:
-            self.blocks = nn.ModuleList([FNOBlock1d(hidden_channels, modes[0]) for _ in range(n_layers)])
+            self.blocks = nn.ModuleList(
+                [FNOBlock1d(hidden_channels, modes[0]) for _ in range(n_layers)]
+            )
         elif dim == 2:
-            self.blocks = nn.ModuleList([FNOBlock2d(hidden_channels, modes[0], modes[1]) for _ in range(n_layers)])
+            self.blocks = nn.ModuleList(
+                [FNOBlock2d(hidden_channels, modes[0], modes[1]) for _ in range(n_layers)]
+            )
         else:
-            self.blocks = nn.ModuleList([FNOBlock3d(hidden_channels, modes[0], modes[1], modes[2]) for _ in range(n_layers)])
+            self.blocks = nn.ModuleList(
+                [FNOBlock3d(hidden_channels, modes[0], modes[1], modes[2]) for _ in range(n_layers)]
+            )
         conv_cls = {1: nn.Conv1d, 2: nn.Conv2d, 3: nn.Conv3d}[dim]
         self.proj = nn.Sequential(
             conv_cls(hidden_channels, hidden_channels * 4, 1),
@@ -114,7 +125,10 @@ class FNO(Module):
             n_layers=n_layers,
             modes=modes,
             dim=dim,
+            gradient_checkpointing=gradient_checkpointing,
         )
+        if compile:
+            self.compile_model(mode=compile_mode)
 
     def set_modes(self, new_modes: int) -> None:
         """Dynamically update the active Fourier mode count (DP curriculum training).
