@@ -24,6 +24,7 @@ projects/*/results/*.gif
 solver_demo.png
 .claude
 CLAUDE.md
+docs
 
 # Editor
 .vscode/
