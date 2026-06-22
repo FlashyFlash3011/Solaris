@@ -132,6 +132,12 @@ docker run --rm -it \
 
 ---
 
+## Projects Built on Solaris
+
+- **[plasma-gsfno](https://github.com/FlashyFlash3011/plasma-gsfno)** — Fourier Neural Operator surrogate for the **Grad–Shafranov** tokamak MHD equilibrium solve. Maps the coil/vacuum flux and pressure/current profiles → poloidal flux ψ(R,Z), replacing the iterative solver with sub-millisecond inference. Trained on 20k physics-validated FreeGS equilibria using `solaris.models.FNO`: **R² = 0.975, ~1.2 ms inference (~650× faster than the solve), ~9× more accurate than a trivial baseline.**
+
+---
+
 ## Architecture Overview
 
 ```
