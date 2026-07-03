@@ -9,8 +9,8 @@ This guide covers everything you need to contribute code: setting up the develop
 ### Clone and install
 
 ```bash
-git clone https://github.com/your-org/solaris.git
-cd solaris
+git clone https://github.com/FlashyFlash3011/Solaris.git
+cd Solaris
 
 # CPU-only (development without GPU)
 pip install torch --index-url https://download.pytorch.org/whl/cpu
