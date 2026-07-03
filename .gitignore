@@ -31,3 +31,4 @@ docs
 .idea/
 *.swp
 *.swo
+.coverage

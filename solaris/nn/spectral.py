@@ -122,13 +122,18 @@ class SpectralConv2d(nn.Module):
             )
             return distributed_irfft2(out_ft, output_size=(nx, ny), group=group, norm="ortho")
 
-        x_ft = torch.fft.rfft2(x, norm="ortho")
-        out_ft = torch.zeros(
-            bsz, self.out_channels, nx, ny // 2 + 1, dtype=torch.cfloat, device=x.device
-        )
-        out_ft[:, :, :mx, :my] = self._mul(x_ft[:, :, :mx, :my], self.weights1[:, :, :mx, :my])
-        out_ft[:, :, -mx:, :my] = self._mul(x_ft[:, :, -mx:, :my], self.weights2[:, :, :mx, :my])
-        return torch.fft.irfft2(out_ft, s=(nx, ny), norm="ortho")
+        # Disable AMP for FFT: ROCm doesn't support half-precision FFT on non-power-of-2 sizes
+        with torch.amp.autocast(device_type=x.device.type, enabled=False):
+            x_ft = torch.fft.rfft2(x.float(), norm="ortho")
+            out_ft = torch.zeros(
+                bsz, self.out_channels, nx, ny // 2 + 1, dtype=torch.cfloat, device=x.device
+            )
+            out_ft[:, :, :mx, :my] = self._mul(x_ft[:, :, :mx, :my], self.weights1[:, :, :mx, :my])
+            out_ft[:, :, -mx:, :my] = self._mul(
+                x_ft[:, :, -mx:, :my], self.weights2[:, :, :mx, :my]
+            )
+            result = torch.fft.irfft2(out_ft, s=(nx, ny), norm="ortho")
+        return result.to(x.dtype)
 
 
 class SpectralConv3d(nn.Module):
