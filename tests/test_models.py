@@ -291,3 +291,12 @@ def test_spectral_conv2d_modes_larger_than_grid():
 
 def test_uno_defaults_at_64():
     assert UNO(1, 1)(torch.randn(1, 1, 64, 64)).shape == (1, 1, 64, 64)
+
+
+# --- WNO arbitrary sizes -----------------------------------------------------
+
+
+@pytest.mark.parametrize("size", [30, 63])
+def test_wno_arbitrary_spatial_size(size):
+    model = WNO(1, 1, hidden_channels=8, n_layers=1, levels=2)
+    assert model(torch.randn(1, 1, size, size)).shape == (1, 1, size, size)

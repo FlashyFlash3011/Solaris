@@ -118,8 +118,9 @@ class WNO(Module):
     levels : int
         DWT decomposition levels per WNO layer.
     padding : int
-        Zero-padding added before the WNO blocks to handle non-power-of-2
-        spatial sizes, removed afterwards.
+        Minimum zero-padding added (bottom/right) before the WNO blocks and
+        removed afterwards.  It is automatically increased so the padded size
+        is a multiple of ``2**levels``, so any input size works.
     """
 
     _meta = ModelMetaData(
@@ -139,6 +140,7 @@ class WNO(Module):
     ) -> None:
         super().__init__(meta=self._meta)
         self.padding = padding
+        self.levels = levels
         self.lift = nn.Conv2d(in_channels, hidden_channels, 1)
         self.blocks = nn.ModuleList(
             [
@@ -176,10 +178,14 @@ class WNO(Module):
         """
         H, W = x.shape[-2], x.shape[-1]
         x = self.lift(x)
-        if self.padding > 0:
-            x = F.pad(x, [0, self.padding, 0, self.padding])
-        for block in self.blocks:
-            x = block(x)
-        if self.padding > 0:
-            x = x[..., :H, :W]
+        # Each DWT level halves the grid, so the padded size must be a multiple
+        # of 2**levels; ``padding`` is the minimum extra border.
+        block = 2**self.levels
+        pad_h = self.padding + (-(H + self.padding)) % block
+        pad_w = self.padding + (-(W + self.padding)) % block
+        if pad_h or pad_w:
+            x = F.pad(x, [0, pad_w, 0, pad_h])
+        for blk in self.blocks:
+            x = blk(x)
+        x = x[..., :H, :W]
         return self.proj(x)
