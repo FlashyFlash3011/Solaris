@@ -14,6 +14,7 @@ from solaris.models.multiscale_fno import MultiScaleFNO
 from solaris.models.residual_corrector import NeuralResidualCorrector
 from solaris.models.uno import UNO
 from solaris.models.wno import WNO
+from solaris.nn import SpectralConv2d
 
 
 @pytest.mark.parametrize(
@@ -260,3 +261,33 @@ def test_residual_corrector_forward():
     x = torch.randn(2, 2, 16, 16)
     out = model(x)
     assert out.shape == (2, 1, 16, 16)
+
+
+# --- FNO.set_modes -----------------------------------------------------------
+
+
+@pytest.mark.parametrize("dim,shape", [(1, (2, 1, 32)), (3, (2, 1, 8, 8, 8))])
+def test_set_modes_works_for_1d_and_3d(dim, shape):
+    model = FNO(1, 1, hidden_channels=8, n_layers=2, modes=4, dim=dim)
+    model.set_modes(2)
+    assert model(torch.randn(*shape)).shape == shape
+
+
+def test_set_modes_reduces_active_modes_1d():
+    model = FNO(1, 1, hidden_channels=8, n_layers=1, modes=8, dim=1)
+    x = torch.randn(2, 1, 64)
+    full = model(x)
+    model.set_modes(2)
+    assert not torch.allclose(model(x), full)
+
+
+# --- Spectral layers with more modes than the grid supports ------------------
+
+
+def test_spectral_conv2d_modes_larger_than_grid():
+    layer = SpectralConv2d(2, 2, modes_x=12, modes_y=12)
+    assert layer(torch.randn(1, 2, 16, 16)).shape == (1, 2, 16, 16)
+
+
+def test_uno_defaults_at_64():
+    assert UNO(1, 1)(torch.randn(1, 1, 64, 64)).shape == (1, 1, 64, 64)
