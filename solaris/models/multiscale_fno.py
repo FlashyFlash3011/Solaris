@@ -74,6 +74,12 @@ class BandSpectralConv2d(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # fp16 FFTs are unsupported on CPU and for non-power-of-2 GPU sizes
+        with torch.amp.autocast(device_type=x.device.type, enabled=False):
+            xf = x if x.dtype in (torch.float32, torch.float64) else x.float()
+            return self._forward_fp32(xf).to(x.dtype)
+
+    def _forward_fp32(self, x: torch.Tensor) -> torch.Tensor:
         B, C, H, W = x.shape
         x_ft = torch.fft.rfft2(x, norm="ortho")
 
@@ -84,22 +90,24 @@ class BandSpectralConv2d(nn.Module):
         k_max_val = self.k_max if self.k_max < float("inf") else k_mag.max().item() + 1.0
         band_mask = (k_mag >= self.k_min) & (k_mag < k_max_val)  # (H, W//2+1)
 
-        m = self.max_modes
-        out_ft = torch.zeros_like(x_ft)
+        # Clamp the retained block to what the grid can represent
+        mx = min(self.max_modes, H // 2)
+        my = min(self.max_modes, W // 2 + 1)
+        out_ft = torch.zeros(B, self.out_channels, H, W // 2 + 1, dtype=x_ft.dtype, device=x.device)
+        if mx == 0:
+            return torch.fft.irfft2(out_ft, s=(H, W), norm="ortho")
+        w1 = self.weights1[:, :, :mx, :my].to(x_ft.dtype)
+        w2 = self.weights2[:, :, :mx, :my].to(x_ft.dtype)
 
         # Positive-kx quadrant
-        r1_mask = band_mask[:m, :m].unsqueeze(0).unsqueeze(0)  # (1,1,m,m)
-        region1 = x_ft[:, :, :m, :m] * r1_mask
-        out_ft[:, :, :m, :m] = out_ft[:, :, :m, :m] + torch.einsum(
-            "bixy,ioxy->boxy", region1, self.weights1
-        )
+        r1_mask = band_mask[:mx, :my].unsqueeze(0).unsqueeze(0)
+        region1 = x_ft[:, :, :mx, :my] * r1_mask
+        out_ft[:, :, :mx, :my] = torch.einsum("bixy,ioxy->boxy", region1, w1)
 
         # Negative-kx quadrant
-        r2_mask = band_mask[-m:, :m].unsqueeze(0).unsqueeze(0)
-        region2 = x_ft[:, :, -m:, :m] * r2_mask
-        out_ft[:, :, -m:, :m] = out_ft[:, :, -m:, :m] + torch.einsum(
-            "bixy,ioxy->boxy", region2, self.weights2
-        )
+        r2_mask = band_mask[-mx:, :my].unsqueeze(0).unsqueeze(0)
+        region2 = x_ft[:, :, -mx:, :my] * r2_mask
+        out_ft[:, :, -mx:, :my] = torch.einsum("bixy,ioxy->boxy", region2, w2)
 
         return torch.fft.irfft2(out_ft, s=(H, W), norm="ortho")
 
