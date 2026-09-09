@@ -12,17 +12,50 @@ import torch
 import torch.nn as nn
 
 
+def _helmholtz_split(u: torch.Tensor, eps: float) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return the (divergence-free, curl-free) parts of a periodic 2-D field.
+
+    Computed in fp32 (or fp64) with autocast disabled — fp16 FFTs are not
+    supported on CPU nor for non-power-of-two sizes on GPU.
+    """
+    assert u.ndim == 4 and u.shape[1] == 2, "expected a (B, 2, H, W) vector field"
+    _, _, H, W = u.shape
+    with torch.amp.autocast(device_type=u.device.type, enabled=False):
+        uf = u if u.dtype in (torch.float32, torch.float64) else u.float()
+        ux_ft = torch.fft.rfft2(uf[:, 0], norm="ortho")  # (B, H, W//2+1)
+        uy_ft = torch.fft.rfft2(uf[:, 1], norm="ortho")
+
+        kx = torch.fft.fftfreq(H, device=u.device, dtype=uf.dtype).reshape(H, 1)
+        ky = torch.fft.rfftfreq(W, device=u.device, dtype=uf.dtype).reshape(1, W // 2 + 1)
+        k2 = (kx**2 + ky**2).clamp(min=eps)
+
+        # Longitudinal (curl-free) coefficient: (k·û / |k|²); the mean is left
+        # in the divergence-free part.
+        proj = (kx * ux_ft + ky * uy_ft) / k2
+        proj[:, 0, 0] = 0.0
+
+        cf = torch.stack(
+            [
+                torch.fft.irfft2(proj * kx, s=(H, W), norm="ortho"),
+                torch.fft.irfft2(proj * ky, s=(H, W), norm="ortho"),
+            ],
+            dim=1,
+        )
+        df = uf - cf
+    return df.to(u.dtype), cf.to(u.dtype)
+
+
 class DivergenceFreeProjection2d(nn.Module):
     """Project a 2-D velocity field to be exactly divergence-free.
 
-    Uses the Helmholtz decomposition in Fourier space.  For a 2-D velocity
-    field u = (u_x, u_y), the solenoidal (divergence-free) component is
-    obtained by projecting out the irrotational part:
+    Uses the Helmholtz decomposition in Fourier space (periodic domain).  For
+    a 2-D velocity field u = (u_x, u_y), the solenoidal (divergence-free)
+    component is obtained by projecting out the irrotational part:
 
         û_⊥(k) = û(k) − [k · û(k) / |k|²] k
 
-    This projection has **zero learnable parameters** and costs essentially
-    nothing: it is a single pass through FFT → projection → iFFT.
+    This projection has **zero learnable parameters** and costs a single
+    FFT → projection → iFFT pass.
 
     Parameters
     ----------
@@ -35,63 +68,57 @@ class DivergenceFreeProjection2d(nn.Module):
         self.eps = eps
 
     def forward(self, u: torch.Tensor) -> torch.Tensor:
-        """Project velocity field to divergence-free subspace.
-
-        Parameters
-        ----------
-        u : torch.Tensor  shape (B, 2, H, W)
-            Two-component velocity field (channel 0 = u_x, channel 1 = u_y).
-
-        Returns
-        -------
-        torch.Tensor  shape (B, 2, H, W)
-            Velocity field with ∇·u = 0 enforced exactly.
-        """
-        assert u.shape[1] == 2, "DivergenceFreeProjection2d expects shape (B,2,H,W)"
-        B, _, H, W = u.shape
-
-        ux_ft = torch.fft.rfft2(u[:, 0], norm="ortho")  # (B, H, W//2+1)
-        uy_ft = torch.fft.rfft2(u[:, 1], norm="ortho")
-
-        # Wavenumber grids
-        kx = torch.fft.fftfreq(H, device=u.device).reshape(H, 1)
-        ky = torch.fft.rfftfreq(W, device=u.device).reshape(1, W // 2 + 1)
-        k2 = kx**2 + ky**2
-
-        # Projection: û_⊥ = û − (k·û / |k|²) k
-        k2_safe = k2.clamp(min=self.eps)
-        k_dot_u = kx * ux_ft + ky * uy_ft
-        proj = k_dot_u / k2_safe
-        proj[:, 0, 0] = 0.0  # preserve DC (mean) component
-
-        ux_df = torch.fft.irfft2(ux_ft - proj * kx, s=(H, W), norm="ortho")
-        uy_df = torch.fft.irfft2(uy_ft - proj * ky, s=(H, W), norm="ortho")
-
-        return torch.stack([ux_df, uy_df], dim=1)
+        """Project ``u`` of shape ``(B, 2, H, W)`` onto the divergence-free subspace."""
+        return _helmholtz_split(u, self.eps)[0]
 
 
 class ConservationProjection(nn.Module):
-    """Renormalise a scalar output field to exactly conserve a global quantity.
+    """Correct an output field so it exactly conserves a global quantity.
 
-    For each sample, the spatial integral (sum) of the output is rescaled to
-    match the spatial integral of the corresponding input channel.  This
-    enforces global conservation of mass, energy, or any other conserved
-    quantity with zero extra parameters.
+    For each sample, output channel ``output_channel`` is adjusted so that its
+    spatial sum equals the spatial sum of input channel ``source_channel``
+    (i.e. the integral on a uniform grid, up to the constant cell area).
+
+    Two correction modes are available:
+
+    ``"additive"`` (default)
+        Shift the field by a constant: ``out + (Σsrc − Σout) / N``.  Exact for
+        fields of any sign and the minimum-L2 correction.
+    ``"multiplicative"``
+        Rescale the field: ``out · Σsrc / Σout``.  Preserves positivity, so it
+        suits strictly positive quantities (density, concentration, water
+        depth).  Undefined when ``Σout`` is ~0; ``eps`` guards the division.
+
+    Important: the constraint is only physically meaningful when both
+    channels are in the *same physical units*.  Applying it to independently
+    z-score–normalised channels conserves a meaningless quantity — enforce it
+    on de-normalised fields instead.
 
     Parameters
     ----------
     source_channel : int
         Channel index in the *input* used as the conserved-quantity reference.
     output_channel : int
-        Channel index in the *output* to be renormalised.
+        Channel index in the *output* to be corrected.
+    mode : str
+        ``"additive"`` or ``"multiplicative"``.
     eps : float
-        Numerical floor to avoid division by zero.
+        Numerical floor for the multiplicative denominator.
     """
 
-    def __init__(self, source_channel: int = 0, output_channel: int = 0, eps: float = 1e-8) -> None:
+    def __init__(
+        self,
+        source_channel: int = 0,
+        output_channel: int = 0,
+        mode: str = "additive",
+        eps: float = 1e-8,
+    ) -> None:
         super().__init__()
+        if mode not in ("additive", "multiplicative"):
+            raise ValueError(f"mode must be 'additive' or 'multiplicative', got {mode!r}")
         self.source_channel = source_channel
         self.output_channel = output_channel
+        self.mode = mode
         self.eps = eps
 
     def forward(self, source: torch.Tensor, output: torch.Tensor) -> torch.Tensor:
@@ -104,28 +131,34 @@ class ConservationProjection(nn.Module):
         Returns
         -------
         torch.Tensor
-            Output with the specified channel rescaled to conserve the source integral.
+            ``output`` with the selected channel corrected to conserve the source integral.
         """
-        spatial_dims = tuple(range(1, source.ndim - 1))
-        src_int = source[:, self.source_channel].abs().sum(dim=spatial_dims)  # (B,)
+        src = source[:, self.source_channel]
+        out = output[:, self.output_channel]
+        spatial = tuple(range(1, out.ndim))
+        src_int = src.sum(dim=tuple(range(1, src.ndim)), keepdim=True).reshape(
+            -1, *([1] * (out.ndim - 1))
+        )
+        out_int = out.sum(dim=spatial, keepdim=True)
 
-        out_ch = output[:, self.output_channel]
-        out_int = out_ch.abs().sum(dim=tuple(range(1, out_ch.ndim))) + self.eps  # (B,)
+        if self.mode == "additive":
+            n = out[0].numel()
+            corrected = out + (src_int - out_int) / n
+        else:
+            sign = torch.where(out_int >= 0, 1.0, -1.0).to(out.dtype)
+            corrected = out * (src_int / (out_int + sign * self.eps))
 
-        scale = src_int / out_int  # (B,)
-        for _ in range(output.ndim - 2):
-            scale = scale.unsqueeze(-1)
-
-        output_renorm = output.clone()
-        output_renorm[:, self.output_channel] = output[:, self.output_channel] * scale
-        return output_renorm
+        channels = list(output.unbind(dim=1))
+        channels[self.output_channel] = corrected
+        return torch.stack(channels, dim=1)
 
 
 class SpectralBandFilter(nn.Module):
     """Learnable bandpass filter in Fourier space.
 
-    Applies a per-band, per-channel learned gain to different frequency ranges.
-    Used as a building block for MultiScaleFNO.
+    Splits the 2-D spectrum into ``n_bands`` equal-width rings in |k| and
+    applies a learned per-band, per-channel gain in (0, 1).  Every mode
+    belongs to exactly one band (the top band includes the maximum |k|).
 
     Parameters
     ----------
@@ -141,21 +174,20 @@ class SpectralBandFilter(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, C, H, W = x.shape
-        x_ft = torch.fft.rfft2(x, norm="ortho")
+        with torch.amp.autocast(device_type=x.device.type, enabled=False):
+            xf = x if x.dtype in (torch.float32, torch.float64) else x.float()
+            x_ft = torch.fft.rfft2(xf, norm="ortho")
 
-        kx = torch.fft.fftfreq(H, device=x.device).reshape(H, 1)
-        ky = torch.fft.rfftfreq(W, device=x.device).reshape(1, W // 2 + 1)
-        k_mag = (kx**2 + ky**2).sqrt()
-        k_max = k_mag.max()
+            kx = torch.fft.fftfreq(H, device=x.device).reshape(H, 1)
+            ky = torch.fft.rfftfreq(W, device=x.device).reshape(1, W // 2 + 1)
+            k_mag = (kx**2 + ky**2).sqrt()
+            # Band index per mode; clamp puts k == k_max into the top band.
+            band = (k_mag / k_mag.max() * self.n_bands).long().clamp(max=self.n_bands - 1)
 
-        band_edges = torch.linspace(0, k_max.item(), self.n_bands + 1, device=x.device)
-        out_ft = torch.zeros_like(x_ft)
-        for b in range(self.n_bands):
-            mask = (k_mag >= band_edges[b]) & (k_mag < band_edges[b + 1])
-            w = torch.sigmoid(self.band_weights[b]).reshape(1, C, 1, 1)
-            out_ft = out_ft + x_ft * mask.unsqueeze(0).unsqueeze(0) * w
-
-        return torch.fft.irfft2(out_ft, s=(H, W), norm="ortho")
+            gains = torch.sigmoid(self.band_weights).to(xf.dtype)  # (n_bands, C)
+            gain_map = gains[band].permute(2, 0, 1)  # (C, H, W//2+1)
+            out = torch.fft.irfft2(x_ft * gain_map, s=(H, W), norm="ortho")
+        return out.to(x.dtype)
 
 
 class CurlFreeProjection2d(nn.Module):
@@ -179,25 +211,7 @@ class CurlFreeProjection2d(nn.Module):
         self.eps = eps
 
     def forward(self, u: torch.Tensor) -> torch.Tensor:
-        assert u.shape[1] == 2, "CurlFreeProjection2d expects shape (B,2,H,W)"
-        B, _, H, W = u.shape
-
-        ux_ft = torch.fft.rfft2(u[:, 0], norm="ortho")
-        uy_ft = torch.fft.rfft2(u[:, 1], norm="ortho")
-
-        kx = torch.fft.fftfreq(H, device=u.device).reshape(H, 1)
-        ky = torch.fft.rfftfreq(W, device=u.device).reshape(1, W // 2 + 1)
-        k2 = kx**2 + ky**2
-
-        k2_safe = k2.clamp(min=self.eps)
-        k_dot_u = kx * ux_ft + ky * uy_ft
-        proj = k_dot_u / k2_safe
-        proj[:, 0, 0] = 0.0
-
-        ux_cf = torch.fft.irfft2(proj * kx, s=(H, W), norm="ortho")
-        uy_cf = torch.fft.irfft2(proj * ky, s=(H, W), norm="ortho")
-
-        return torch.stack([ux_cf, uy_cf], dim=1)
+        return _helmholtz_split(u, self.eps)[1]
 
 
 class NeumannBCLayer(nn.Module):

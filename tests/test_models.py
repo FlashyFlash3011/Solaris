@@ -300,3 +300,25 @@ def test_uno_defaults_at_64():
 def test_wno_arbitrary_spatial_size(size):
     model = WNO(1, 1, hidden_channels=8, n_layers=1, levels=2)
     assert model(torch.randn(1, 1, size, size)).shape == (1, 1, size, size)
+
+
+# --- Mixed precision (cuFFT/hipFFT reject fp16 on non-power-of-2 sizes) ------
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU")
+@pytest.mark.parametrize(
+    "factory,shape",
+    [
+        (lambda: FNO(1, 1, 8, 1, 4, dim=1), (1, 1, 24)),
+        (lambda: FNO(1, 1, 8, 1, 4, dim=2), (1, 1, 24, 24)),
+        (lambda: FNO(1, 1, 8, 1, 4, dim=3), (1, 1, 12, 12, 12)),
+        (lambda: MultiScaleFNO(1, 1, 8, 1, max_modes=4), (1, 1, 24, 24)),
+        (lambda: ConstrainedFNO(1, 2, 8, 1, 4, constraint="divergence_free"), (1, 1, 24, 24)),
+    ],
+)
+def test_fp16_autocast_forward_backward(factory, shape):
+    model = factory().cuda()
+    with torch.autocast("cuda", dtype=torch.float16):
+        out = model(torch.randn(*shape, device="cuda"))
+    out.float().sum().backward()
+    assert torch.isfinite(out.float()).all()

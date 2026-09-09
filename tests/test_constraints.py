@@ -4,11 +4,14 @@
 import pytest
 import torch
 
+from solaris.models import ConstrainedFNO
 from solaris.nn import (
+    ConservationProjection,
     CurlFreeProjection2d,
     DirichletBCLayer,
     DivergenceFreeProjection2d,
     NeumannBCLayer,
+    SpectralBandFilter,
 )
 
 
@@ -68,3 +71,47 @@ def test_dirichlet_bc_default_zero_boundary():
     out = layer(x)
     assert torch.allclose(out[:, :, 0, :], torch.zeros(2, 1, 8))
     assert torch.allclose(out[:, :, -1, :], torch.zeros(2, 1, 8))
+
+
+# --- ConservationProjection ---------------------------------------------------
+
+
+def test_conservation_projection_matches_signed_integral():
+    torch.manual_seed(0)
+    src = torch.randn(4, 1, 16, 16)
+    out = torch.randn(4, 1, 16, 16)
+    res = ConservationProjection()(src, out)
+    torch.testing.assert_close(res.sum(dim=(1, 2, 3)), src.sum(dim=(1, 2, 3)))
+
+
+def test_conservation_projection_multiplicative_keeps_positivity():
+    src = torch.rand(3, 1, 8, 8) + 0.1
+    out = torch.rand(3, 1, 8, 8) + 0.1
+    res = ConservationProjection(mode="multiplicative")(src, out)
+    torch.testing.assert_close(res.sum(dim=(1, 2, 3)), src.sum(dim=(1, 2, 3)))
+    assert (res > 0).all()
+
+
+def test_conservation_projection_leaves_other_channels_untouched():
+    src = torch.randn(2, 2, 8, 8)
+    out = torch.randn(2, 3, 8, 8)
+    res = ConservationProjection(source_channel=1, output_channel=2)(src, out)
+    torch.testing.assert_close(res[:, :2], out[:, :2])
+    torch.testing.assert_close(res[:, 2].sum(dim=(1, 2)), src[:, 1].sum(dim=(1, 2)))
+
+
+def test_constrained_fno_conservative_conserves():
+    model = ConstrainedFNO(1, 1, 8, 1, 4, constraint="conservative")
+    x = torch.randn(3, 1, 16, 16)
+    torch.testing.assert_close(model(x).sum(dim=(1, 2, 3)), x.sum(dim=(1, 2, 3)))
+
+
+# --- SpectralBandFilter --------------------------------------------------------
+
+
+def test_spectral_band_filter_covers_highest_frequency():
+    f = SpectralBandFilter(1, n_bands=3)
+    with torch.no_grad():
+        f.band_weights.fill_(50.0)  # sigmoid(50) == 1 → filter should be identity
+    x = torch.randn(1, 1, 16, 16)
+    torch.testing.assert_close(f(x), x, atol=1e-5, rtol=1e-5)
