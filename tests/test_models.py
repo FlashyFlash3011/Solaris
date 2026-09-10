@@ -322,3 +322,17 @@ def test_fp16_autocast_forward_backward(factory, shape):
         out = model(torch.randn(*shape, device="cuda"))
     out.float().sum().backward()
     assert torch.isfinite(out.float()).all()
+
+
+# --- CoupledOperator initialisation -------------------------------------------
+
+
+def test_coupled_learned_starts_uncoupled():
+    torch.manual_seed(0)
+    ops = {"a": FNO(1, 1, 8, 1, 4), "b": FNO(1, 2, 8, 1, 4)}
+    model = CoupledOperator(ops, {"a": 1, "b": 2}, coupling_mode="learned").eval()
+    x = {"a": torch.randn(2, 1, 16, 16), "b": torch.randn(2, 1, 16, 16)}
+    out = model(x)
+    torch.testing.assert_close(out["a"], ops["a"](x["a"]))
+    torch.testing.assert_close(out["b"], ops["b"](x["b"]))
+    assert model.coupling_strengths().max() < 0.05

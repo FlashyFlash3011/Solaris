@@ -12,8 +12,11 @@ This module provides a systematic API for that kind of coupling.
 Coupling modes
 --------------
 ``"sequential"``
-    Each operator's output is concatenated with the next operator's input.
-    Simple, no extra parameters, captures one-directional influence.
+    Each operator's output is added (scaled by 0.1, channel-aligned) to the
+    next operator's output.  No extra parameters; a crude one-directional
+    baseline.  Note that it — like ``"learned"`` — post-processes operator
+    outputs, so hard constraints enforced inside an operator (e.g. a
+    ``ConstrainedFNO``) are no longer guaranteed on the coupled output.
 
 ``"learned"``
     A ``LearnedCouplingLayer`` discovers which fields influence which others
@@ -70,8 +73,9 @@ class LearnedCouplingLayer(nn.Module):
         super().__init__()
         self.n_fields = n_fields
 
-        # Soft coupling matrix — initialised near zero (uncoupled baseline)
-        self.coupling_weights = nn.Parameter(0.01 * torch.randn(n_fields, n_fields))
+        # Soft coupling matrix — logits start at -5 so sigmoid(W) ≈ 0.007:
+        # the fields begin (almost) uncoupled and coupling is learned.
+        self.coupling_weights = nn.Parameter(-5.0 + 0.01 * torch.randn(n_fields, n_fields))
 
         # Lightweight per-field projections at the coupling interface
         self.proj_in = nn.ModuleList(
@@ -158,6 +162,11 @@ class CoupledOperator(Module):
             self.unadapters = nn.ModuleDict(
                 {name: nn.Conv2d(min_ch, ch, 1) for name, ch in coupling_channels.items()}
             )
+            # Zero-init the residual projection so that at initialisation the
+            # coupled output equals the independent operator outputs exactly.
+            for conv in self.unadapters.values():
+                nn.init.zeros_(conv.weight)
+                nn.init.zeros_(conv.bias)
 
         # operators are not JSON-serialisable
         self._capture_init_args(
