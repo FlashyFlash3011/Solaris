@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Tests for FNO, AFNO, ConstrainedFNO, WNO, UNO, DeepONet, and other models
 
+import math
+
 import pytest
 import torch
 
@@ -336,3 +338,32 @@ def test_coupled_learned_starts_uncoupled():
     torch.testing.assert_close(out["a"], ops["a"](x["a"]))
     torch.testing.assert_close(out["b"], ops["b"](x["b"]))
     assert model.coupling_strengths().max() < 0.05
+
+
+# --- Conformal quantile ---------------------------------------------------------
+
+
+class _Identity(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.p = torch.nn.Parameter(torch.zeros(1))
+
+    def forward(self, x):
+        return x
+
+
+def test_conformal_qhat_is_finite_sample_order_statistic():
+    n, alpha = 10, 0.1
+    scores = torch.arange(1.0, n + 1)  # residual of sample i is i
+    cal_x = torch.zeros(n, 1)
+    cal_y = scores[:, None]
+    q = ConformalNeuralOperator(_Identity()).calibrate(cal_x, cal_y, alpha=alpha)
+    k = math.ceil((n + 1) * (1 - alpha))
+    assert q == scores[k - 1].item()
+
+
+def test_conformal_qhat_infinite_when_calibration_set_too_small():
+    cal_x = torch.zeros(5, 1)
+    cal_y = torch.ones(5, 1)
+    q = ConformalNeuralOperator(_Identity()).calibrate(cal_x, cal_y, alpha=0.1)
+    assert math.isinf(q)

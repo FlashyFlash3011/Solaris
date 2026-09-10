@@ -3,7 +3,7 @@
 
 """Conformal Neural Operator — statistically rigorous uncertainty quantification.
 
-Wraps *any* PhysicsNeMo model with split conformal prediction to produce
+Wraps *any* model with split conformal prediction to produce
 calibrated uncertainty intervals with a user-specified coverage guarantee:
 
     P(y ∈ [ŷ_low, ŷ_high]) ≥ 1 − α
@@ -23,14 +23,18 @@ How it works
 2. Compute the finite-sample-corrected (1-α) quantile q̂ of those scores.
 3. At test time, output intervals: [ŷ − q̂,  ŷ + q̂]
 
-Step 2 uses the standard Venn–Abers finite-sample correction so that the
+Step 2 uses the standard split-conformal finite-sample quantile so that the
 coverage guarantee holds even for small calibration sets:
-       level = (1 − α)(1 + 1/n_cal)  [clamped to 1]
+       q̂ = the ⌈(n_cal + 1)(1 − α)⌉-th smallest score
+If that index exceeds n_cal (too few calibration samples for the requested
+α), q̂ = +∞ — the only interval with a valid guarantee.
 
 References
 ----------
 Angelopoulos & Bates, "A Gentle Introduction to Conformal Prediction", 2021.
 """
+
+import math
 
 import torch
 import torch.nn as nn
@@ -52,7 +56,7 @@ class ConformalNeuralOperator(nn.Module):
     Parameters
     ----------
     model : nn.Module
-        Any trained PhysicsNeMo model.
+        Any trained model.
     """
 
     def __init__(self, model: nn.Module) -> None:
@@ -90,6 +94,7 @@ class ConformalNeuralOperator(nn.Module):
         float
             The calibrated threshold q̂ (stored internally for ``predict``).
         """
+        was_training = self.model.training
         self.model.eval()
         device = next(self.model.parameters()).device
 
@@ -105,12 +110,16 @@ class ConformalNeuralOperator(nn.Module):
         scores = torch.cat(scores)  # (N,)
         n_cal = len(scores)
 
-        # Finite-sample corrected quantile (Venn-Abers)
-        level = torch.tensor((1.0 - alpha) * (1.0 + 1.0 / n_cal)).clamp(max=1.0)
-        q_hat = torch.quantile(scores, level)
+        # Split-conformal quantile: the ⌈(n+1)(1−α)⌉-th order statistic.
+        k = math.ceil((n_cal + 1) * (1.0 - alpha))
+        if k > n_cal:
+            q_hat = torch.tensor(float("inf"))
+        else:
+            q_hat = torch.sort(scores).values[k - 1]
 
         self._q_hat = q_hat.to(device)
         self._calibrated_buf.fill_(True)
+        self.model.train(was_training)
         return q_hat.item()
 
     @torch.no_grad()
