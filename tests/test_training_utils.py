@@ -185,3 +185,37 @@ def test_static_capture_reset():
     capturer.reset()
     assert capturer._step_count == 0
     assert capturer._graph is None
+
+
+# --- WarmupCosineScheduler ---------------------------------------------------------
+
+
+def _sched(warmup, total, base=1e-3, min_lr=0.0):
+    from solaris.utils import WarmupCosineScheduler
+
+    p = torch.nn.Parameter(torch.zeros(1))
+    opt = torch.optim.SGD([p], lr=base)
+    return opt, WarmupCosineScheduler(opt, warmup, total, base_lr=base, min_lr=min_lr)
+
+
+def test_warmup_cosine_without_warmup_starts_at_base_lr():
+    opt, s = _sched(0, 10)
+    assert opt.param_groups[0]["lr"] == pytest.approx(1e-3)
+    lrs = [s.step() for _ in range(10)]
+    assert lrs[0] > 0.9e-3
+    assert lrs == sorted(lrs, reverse=True)
+    assert lrs[-1] == pytest.approx(0.0, abs=1e-12)
+
+
+def test_warmup_cosine_first_epoch_lr_is_nonzero():
+    opt, s = _sched(4, 20)
+    assert opt.param_groups[0]["lr"] == pytest.approx(1e-3 / 4)
+    lrs = [s.step() for _ in range(3)]
+    assert lrs == pytest.approx([2e-3 / 4, 3e-3 / 4, 1e-3])
+
+
+def test_warmup_cosine_ends_at_min_lr():
+    _, s = _sched(2, 12, min_lr=1e-5)
+    lrs = [s.step() for _ in range(11)]
+    assert lrs[-1] == pytest.approx(1e-5)
+    assert max(lrs) == pytest.approx(1e-3)

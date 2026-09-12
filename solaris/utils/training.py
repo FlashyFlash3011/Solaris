@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from typing import Any
 
@@ -101,20 +102,27 @@ class GradientClipper:
 class WarmupCosineScheduler:
     """Learning rate scheduler with linear warmup followed by cosine decay.
 
-    Wraps :class:`torch.optim.lr_scheduler.CosineAnnealingLR` with an
-    initial linear warmup phase.  Call :meth:`step` once per epoch.
+    Call :meth:`step` once at the *end* of each epoch.  The learning rate is a
+    closed-form function of the number of completed epochs ``e``:
+
+    * warmup (``e < warmup_epochs``): ``base_lr * (e + 1) / warmup_epochs``, so
+      the very first epoch already trains at ``base_lr / warmup_epochs``;
+    * then cosine decay from ``base_lr`` to ``min_lr``, reaching ``min_lr`` on
+      the last epoch and staying there afterwards.
+
+    ``warmup_epochs=0`` starts directly at ``base_lr``.
 
     Parameters
     ----------
     optimizer : torch.optim.Optimizer
     warmup_epochs : int
-        Number of epochs to linearly ramp the LR from 0 to ``base_lr``.
+        Number of epochs of linear warmup.
     total_epochs : int
         Total training epochs (including warmup).
     base_lr : float
         Peak learning rate (after warmup).
     min_lr : float
-        Minimum LR at the end of cosine decay.
+        Learning rate at the end of the cosine decay.
     """
 
     def __init__(
@@ -125,36 +133,48 @@ class WarmupCosineScheduler:
         base_lr: float,
         min_lr: float = 0.0,
     ) -> None:
+        if warmup_epochs < 0 or total_epochs < 1:
+            raise ValueError("warmup_epochs must be >= 0 and total_epochs >= 1")
         self.optimizer = optimizer
         self.warmup_epochs = warmup_epochs
         self.total_epochs = total_epochs
         self.base_lr = base_lr
         self.min_lr = min_lr
         self._epoch = 0
-        self._cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer,
-            T_max=max(1, total_epochs - warmup_epochs),
-            eta_min=min_lr,
-        )
-        for pg in optimizer.param_groups:
-            pg["lr"] = 0.0
+        self._apply(self.lr_at(0))
+
+    def lr_at(self, epoch: int) -> float:
+        """Learning rate used during epoch index ``epoch`` (0-based)."""
+        if epoch < self.warmup_epochs:
+            return self.base_lr * (epoch + 1) / self.warmup_epochs
+        decay_epochs = self.total_epochs - self.warmup_epochs
+        if decay_epochs <= 1:
+            return self.base_lr if epoch < self.total_epochs else self.min_lr
+        progress = min(1.0, (epoch - self.warmup_epochs) / (decay_epochs - 1))
+        return self.min_lr + 0.5 * (self.base_lr - self.min_lr) * (1 + math.cos(math.pi * progress))
+
+    def _apply(self, lr: float) -> None:
+        for pg in self.optimizer.param_groups:
+            pg["lr"] = lr
 
     def step(self) -> float:
-        """Advance one epoch and return the new learning rate."""
+        """Advance one epoch and return the learning rate for the next epoch."""
         self._epoch += 1
-        if self._epoch <= self.warmup_epochs:
-            lr = self.base_lr * self._epoch / max(1, self.warmup_epochs)
-            for pg in self.optimizer.param_groups:
-                pg["lr"] = lr
-        else:
-            self._cosine.step()
-            lr = self.optimizer.param_groups[0]["lr"]
+        lr = self.lr_at(self._epoch)
+        self._apply(lr)
         return lr
 
     @property
     def last_lr(self) -> float:
         """Current learning rate."""
         return self.optimizer.param_groups[0]["lr"]
+
+    def state_dict(self) -> dict[str, Any]:
+        return {"epoch": self._epoch}
+
+    def load_state_dict(self, state: dict[str, Any]) -> None:
+        self._epoch = int(state["epoch"])
+        self._apply(self.lr_at(self._epoch))
 
 
 class AutoCheckpoint:
