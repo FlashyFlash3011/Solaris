@@ -98,3 +98,23 @@ def test_hdf5dataset_with_transforms():
         assert sample["input"].abs().max() < 1e-4
     finally:
         os.unlink(path)
+
+
+# --- PhysicsDataset raw arrays ------------------------------------------------------
+
+
+def test_physics_dataset_raw_ndarray(tmp_path):
+    from solaris.datapipes import PhysicsDataset
+
+    np.save(tmp_path / "a.npy", np.arange(2 * 4 * 4, dtype=np.float32).reshape(2, 4, 4))
+    sample = PhysicsDataset(tmp_path)[0]
+    assert sample["input"].shape == (1, 4, 4)
+    assert sample["target"].shape == (1, 4, 4)
+
+
+def test_physics_dataset_dict_npy(tmp_path):
+    from solaris.datapipes import PhysicsDataset
+
+    np.save(tmp_path / "a.npy", {"input": np.zeros((1, 4, 4)), "target": np.ones((1, 4, 4))})
+    sample = PhysicsDataset(tmp_path)[0]
+    assert sample["target"].sum() == 16

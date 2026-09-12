@@ -49,12 +49,13 @@ class PhysicsDataset(Dataset):
         return len(self.files)
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
-        arr = np.load(self.files[idx], allow_pickle=True).item()
-        # Support both dict-of-arrays and raw array formats
-        if isinstance(arr, dict):
-            sample = {k: torch.as_tensor(v, dtype=torch.float32) for k, v in arr.items()}
+        # Support both raw arrays and pickled dict-of-arrays.  Pickled .npy
+        # files can execute code on load — only use data you trust.
+        arr = np.load(self.files[idx], allow_pickle=True)
+        if arr.dtype == object and arr.shape == () and isinstance(arr.item(), dict):
+            sample = {k: torch.as_tensor(v, dtype=torch.float32) for k, v in arr.item().items()}
         else:
-            arr = np.load(self.files[idx])
+            # Raw array of shape (2*C, ...): first half → input, second half → target
             half = arr.shape[0] // 2
             sample = {
                 "input": torch.as_tensor(arr[:half], dtype=torch.float32),
