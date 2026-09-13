@@ -43,21 +43,30 @@ def compare(args):
     tgt_mean, tgt_std = float(stats["tgt_mean"]), float(stats["tgt_std"])
 
     # Load model
-    ckpt = torch.load(ckpt_path, map_location=device)
-    model = FNO(in_channels=1, out_channels=1, hidden_channels=64, n_layers=4, modes=16, dim=2)
-    model.load_state_dict(ckpt["model"])
+    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+    model = FNO(
+        in_channels=1,
+        out_channels=1,
+        hidden_channels=ckpt.get("hidden", 64),
+        n_layers=ckpt.get("n_layers", 4),
+        modes=ckpt.get("modes", 16),
+        dim=2,
+    )
+    model.load_state_dict(ckpt["model_state_dict"])
     model = model.to(device).eval()
     log.info(f"Loaded FNO from {ckpt_path}")
 
+    H, W = ckpt.get("H", 64), ckpt.get("W", 64)
+    nu, dt, k = ckpt.get("nu", 1e-3), ckpt.get("dt", 0.01), ckpt.get("forecast_steps", 4)
     rng = np.random.default_rng(999)
     solver_times, fno_times, l2_errors = [], [], []
 
     for i in range(args.n_test):
-        omega0 = random_vorticity_ic(64, 64, n_modes=6, rng=rng)
+        omega0 = random_vorticity_ic(H, W, n_modes=6, rng=rng)
 
-        # Solver reference
+        # Solver reference: same horizon and settings the model was trained on
         t0 = time.perf_counter()
-        snaps = solve_ns(omega0, nu=1e-3, dt=0.01, n_steps=4, n_snapshots=5)
+        snaps = solve_ns(omega0, nu=nu, dt=dt, n_steps=k, n_snapshots=k + 1)
         solver_times.append(time.perf_counter() - t0)
         omega_t = snaps[0].unsqueeze(0).unsqueeze(0)  # (1,1,H,W)
         omega_gt = snaps[-1]  # (H,W) ground truth
@@ -87,9 +96,9 @@ def compare(args):
         import matplotlib.pyplot as plt
 
         omega0_last = random_vorticity_ic(
-            64, 64, n_modes=6, rng=np.random.default_rng(999 + args.n_test - 1)
+            H, W, n_modes=6, rng=np.random.default_rng(999 + args.n_test - 1)
         )
-        snaps = solve_ns(omega0_last, nu=1e-3, dt=0.01, n_steps=4, n_snapshots=5)
+        snaps = solve_ns(omega0_last, nu=nu, dt=dt, n_steps=k, n_snapshots=k + 1)
         inp = snaps[0]
         gt = snaps[-1]
         inp_norm = (inp.unsqueeze(0).unsqueeze(0) - in_mean) / in_std

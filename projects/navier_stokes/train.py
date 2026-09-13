@@ -29,6 +29,7 @@ from torch.utils.data import DataLoader, TensorDataset
 sys.path.insert(0, str(Path(__file__).parent))
 from solver import random_vorticity_ic, solve_ns  # noqa: E402
 
+from solaris.datapipes import cached_arrays
 from solaris.metrics import relative_l2_error
 from solaris.models.fno import FNO
 from solaris.utils import get_logger, save_checkpoint
@@ -79,25 +80,24 @@ def train(args):
     log.info(f"Device: {device}")
 
     # ── Data ──
-    cache = Path(args.cache)
-    if cache.exists():
-        log.info(f"Loading cached dataset from {cache}")
-        d = np.load(cache)
-        inputs_arr, targets_arr = d["inputs"], d["targets"]
-    else:
-        inputs_arr, targets_arr = generate_dataset(
-            args.n_sims,
-            args.H,
-            args.W,
-            args.nu,
-            args.dt,
-            args.n_steps,
-            args.forecast_steps,
-            seed=42,
-        )
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(cache, inputs=inputs_arr, targets=targets_arr)
-        log.info(f"Saved dataset → {cache}")
+    data_cfg = {
+        "n_sims": args.n_sims,
+        "H": args.H,
+        "W": args.W,
+        "nu": args.nu,
+        "dt": args.dt,
+        "n_steps": args.n_steps,
+        "forecast_steps": args.forecast_steps,
+        "seed": 42,
+    }
+
+    def _generate():
+        inputs, targets = generate_dataset(**data_cfg)
+        return {"inputs": inputs, "targets": targets}
+
+    data = cached_arrays(args.cache, data_cfg, _generate)
+    inputs_arr, targets_arr = data["inputs"], data["targets"]
+    log.info(f"Dataset: {len(inputs_arr)} pairs (cache: {args.cache})")
 
     # Normalise
     in_mean, in_std = inputs_arr.mean(), inputs_arr.std() + 1e-8
@@ -190,7 +190,16 @@ def train(args):
                 scheduler,
                 epoch,
                 val_loss,
-                extra={"H": args.H, "W": args.W, "nu": args.nu},
+                extra={
+                    "H": args.H,
+                    "W": args.W,
+                    "nu": args.nu,
+                    "dt": args.dt,
+                    "forecast_steps": args.forecast_steps,
+                    "hidden": args.hidden,
+                    "n_layers": args.n_layers,
+                    "modes": args.modes,
+                },
             )
 
     log.info(f"Done. Best val loss: {best_val:.4e} → {ckpt_dir}/best_fno.pt")
