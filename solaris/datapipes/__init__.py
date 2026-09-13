@@ -1,3 +1,4 @@
+from solaris.datapipes.cache import CacheMismatchError, cached_arrays
 from solaris.datapipes.dataset import HDF5Dataset, PhysicsDataset, TensorDataset, build_dataloader
 from solaris.datapipes.transforms import (
     AddGaussianNoise,
@@ -8,6 +9,8 @@ from solaris.datapipes.transforms import (
 )
 
 __all__ = [
+    "cached_arrays",
+    "CacheMismatchError",
     "PhysicsDataset",
     "TensorDataset",
     "HDF5Dataset",
