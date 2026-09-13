@@ -5,6 +5,7 @@ import pytest
 import torch
 
 from solaris.core import ModelMetaData, Module
+from solaris.models import FNO
 from solaris.models.mlp import FullyConnected
 
 
@@ -129,3 +130,46 @@ def test_compile_model_still_runs():
     except Exception:
         # torch.compile may fail on CPU-only environments without a compiler
         pytest.skip("torch.compile backend not available in this environment")
+
+
+# --- Module init-arg capture with inheritance --------------------------------------
+
+
+def test_auto_capture_records_most_derived_signature():
+    class A(Module):
+        def __init__(self, a=1):
+            super().__init__()
+
+    class B(A):
+        def __init__(self, a=1, b=2):
+            super().__init__(a)
+
+    assert B(5, 7)._init_args == {"a": 5, "b": 7}
+
+
+def test_subclass_of_explicit_capture_model_is_reconstructable(tmp_path):
+    class Narrow(FNO):
+        def __init__(self, in_channels, out_channels, width=8):
+            super().__init__(in_channels, out_channels, hidden_channels=width, n_layers=1, modes=4)
+
+    m = Narrow(1, 2, width=6)
+    assert m._init_args == {"in_channels": 1, "out_channels": 2, "width": 6}
+
+
+def test_explicit_capture_in_most_derived_class_wins():
+    class C(Module):
+        def __init__(self, a=1, b=2):
+            super().__init__()
+            self._capture_init_args(a=a)
+
+    assert C(3, 4)._init_args == {"a": 3}
+
+
+# --- Module.load device ---------------------------------------------------------------
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU")
+def test_module_load_honours_map_location(tmp_path):
+    m = FNO(1, 1, 8, 1, 4)
+    m.save(tmp_path / "m.pt")
+    assert FNO.load(tmp_path / "m.pt", map_location="cuda").device.type == "cuda"

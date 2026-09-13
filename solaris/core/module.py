@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024, Contributors
 # SPDX-License-Identifier: Apache-2.0
 
-"""Base Module class for all PhysicsNeMo models."""
+"""Base Module class for all Solaris models."""
 
 import functools
 import importlib
@@ -34,11 +34,12 @@ class Module(nn.Module):
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Wrap each subclass __init__ to auto-capture constructor args.
 
-        If a subclass never calls ``_capture_init_args()`` manually, the wrapper
-        records all bound arguments (excluding ``self`` and ``meta``) after
-        ``__init__`` returns.  Manual calls to ``_capture_init_args()`` always
-        take precedence — auto-capture only fires when ``_init_args`` is still
-        empty at the end of construction.
+        Only the *most-derived* constructor's arguments are recorded, so a
+        model can always be rebuilt with ``type(model)(**model._init_args)``.
+        If the most-derived ``__init__`` calls :meth:`_capture_init_args`
+        itself, that explicit capture wins; explicit captures made by parent
+        constructors (via ``super().__init__``) are superseded by the
+        subclass's own arguments.
         """
         super().__init_subclass__(**kwargs)
         original_init = cls.__dict__.get("__init__")
@@ -47,16 +48,23 @@ class Module(nn.Module):
 
         @functools.wraps(original_init)
         def _auto_capture_init(self: "Module", *args: Any, **kwargs: Any) -> None:
-            original_init(self, *args, **kwargs)
-            if not self._init_args:
-                sig = inspect.signature(original_init)
-                try:
-                    bound = sig.bind(self, *args, **kwargs)
-                    bound.apply_defaults()
-                except TypeError:
-                    return
-                captured = {k: v for k, v in bound.arguments.items() if k not in ("self", "meta")}
-                self._init_args = captured
+            depth = self.__dict__.get("_solaris_init_depth", 0) + 1
+            self.__dict__["_solaris_init_depth"] = depth
+            try:
+                original_init(self, *args, **kwargs)
+            finally:
+                self.__dict__["_solaris_init_depth"] = depth - 1
+            if depth != 1 or self.__dict__.get("_solaris_capture_depth") == 1:
+                return
+            sig = inspect.signature(original_init)
+            try:
+                bound = sig.bind(self, *args, **kwargs)
+                bound.apply_defaults()
+            except TypeError:
+                return
+            self._init_args = {
+                k: v for k, v in bound.arguments.items() if k not in ("self", "meta")
+            }
 
         cls.__init__ = _auto_capture_init
 
@@ -85,6 +93,7 @@ class Module(nn.Module):
         returns.
         """
         self._init_args = kwargs
+        self.__dict__["_solaris_capture_depth"] = self.__dict__.get("_solaris_init_depth", 1)
 
     def save(self, path: str | Path) -> None:
         """Save weights + init-args to *path* (a ``.pt`` file)."""
@@ -122,7 +131,7 @@ class Module(nn.Module):
         ckpt = torch.load(path, map_location=map_location, weights_only=False)
         model = cls(**ckpt["init_args"])
         model.load_state_dict(ckpt["state_dict"])
-        return model
+        return model.to(map_location)
 
     @classmethod
     def from_checkpoint(
@@ -151,7 +160,7 @@ class Module(nn.Module):
         klass = getattr(importlib.import_module(module_path), class_name)
         model = klass(**ckpt["init_args"])
         model.load_state_dict(ckpt["state_dict"])
-        return model
+        return model.to(map_location)
 
     @classmethod
     def from_torch(
