@@ -28,6 +28,7 @@ from torch.utils.data import DataLoader, TensorDataset
 sys.path.insert(0, str(Path(__file__).parent))
 from solver import random_gaussian_ic, solve_wave_snapshots  # noqa: E402
 
+from solaris.datapipes import cached_arrays
 from solaris.metrics import relative_l2_error
 from solaris.models.fno import FNO
 from solaris.nn.embeddings import SinusoidalTimestepEmbedding
@@ -39,7 +40,7 @@ def build_timestep_channel(t: float, H: int, W: int, embed_dim: int = 32) -> tor
 
     The embedding is reduced to a scalar via sum and broadcast spatially.
     """
-    embedder = SinusoidalTimestepEmbedding(dim=embed_dim)
+    embedder = SinusoidalTimestepEmbedding(embed_dim=embed_dim)
     t_tensor = torch.tensor([t], dtype=torch.float32)
     emb = embedder(t_tensor).sum()  # scalar
     return emb.expand(1, H, W)
@@ -107,25 +108,24 @@ def train(args):
     log.info(f"Device: {device}")
 
     # ── Data ──
-    cache = Path(args.cache)
-    if cache.exists():
-        log.info(f"Loading cached dataset from {cache}")
-        d = np.load(cache)
-        inputs_arr, targets_arr = d["inputs"], d["targets"]
-    else:
-        inputs_arr, targets_arr = generate_dataset(
-            args.n_sims,
-            args.H,
-            args.W,
-            args.c,
-            args.dt,
-            args.n_steps,
-            args.n_snapshots,
-            seed=42,
-        )
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(cache, inputs=inputs_arr, targets=targets_arr)
-        log.info(f"Saved dataset → {cache}")
+    data_cfg = {
+        "n_sims": args.n_sims,
+        "H": args.H,
+        "W": args.W,
+        "c": args.c,
+        "dt_solver": args.dt,
+        "n_steps": args.n_steps,
+        "n_snapshots": args.n_snapshots,
+        "seed": 42,
+    }
+
+    def _generate():
+        inputs, targets = generate_dataset(**data_cfg)
+        return {"inputs": inputs, "targets": targets}
+
+    data = cached_arrays(args.cache, data_cfg, _generate)
+    inputs_arr, targets_arr = data["inputs"], data["targets"]
+    log.info(f"Dataset: {len(inputs_arr)} pairs (cache: {args.cache})")
 
     in_mean, in_std = inputs_arr.mean(), inputs_arr.std() + 1e-8
     tgt_mean, tgt_std = targets_arr.mean(), targets_arr.std() + 1e-8
@@ -212,7 +212,17 @@ def train(args):
                 scheduler,
                 epoch,
                 val_loss,
-                extra={"H": args.H, "W": args.W, "c": args.c},
+                extra={
+                    "H": args.H,
+                    "W": args.W,
+                    "c": args.c,
+                    "dt": args.dt,
+                    "n_steps": args.n_steps,
+                    "n_snapshots": args.n_snapshots,
+                    "hidden": args.hidden,
+                    "n_layers": args.n_layers,
+                    "modes": args.modes,
+                },
             )
 
     log.info(f"Done. Best val loss: {best_val:.4e} → {ckpt_dir}/best_wave_fno.pt")
