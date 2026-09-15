@@ -42,6 +42,7 @@ from solver import (
     run_hurricane_simulation,
 )
 
+from solaris.datapipes import cached_arrays
 from solaris.models.conformal import ConformalNeuralOperator
 from solaris.models.constrained_fno import ConstrainedFNO
 from solaris.models.coupled import CoupledOperator
@@ -279,25 +280,16 @@ def train(args) -> None:
 
     ckpt_dir = Path(args.checkpoint_dir)
     ckpt_dir.mkdir(parents=True, exist_ok=True)
-    cache = Path(args.cache)
-
-    # ── Dataset ────────────────────────────────────────────────────────
-    if cache.exists():
-        log.info(f"Loading cached dataset from {cache}")
-        d = np.load(cache)
-        raw = {k: d[k] for k in ["flood_in", "flood_tgt", "wind_in", "wind_tgt"]}
-    else:
-        raw = generate_dataset(
-            args.n_sims,
-            args.H,
-            args.W,
-            args.n_hours,
-            args.n_snapshots,
-            seed=42,
-        )
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(cache, **raw)
-        log.info(f"Saved dataset → {cache}")
+    data_cfg = {
+        "n_sims": args.n_sims,
+        "H": args.H,
+        "W": args.W,
+        "n_hours": args.n_hours,
+        "n_snapshots": args.n_snapshots,
+        "seed": 42,
+    }
+    raw = cached_arrays(args.cache, data_cfg, lambda: generate_dataset(**data_cfg))
+    log.info(f"Dataset cache: {args.cache}")
 
     N = len(raw["flood_in"])
     log.info(f"Total samples: {N}  flood_in shape: {raw['flood_in'].shape}")

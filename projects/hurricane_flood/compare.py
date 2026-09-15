@@ -62,7 +62,8 @@ def load_model(checkpoint_dir: str, device: torch.device):
     ckpt = torch.load(ckpt_path, map_location=device)
 
     # Rebuild model from saved hyper-params
-    extra = ckpt.get("extra", {})
+    # save_checkpoint stores ``extra`` entries at the top level of the checkpoint
+    extra = ckpt
 
     class _Args:
         hidden_flood = extra.get("hidden_flood", 64)
@@ -90,9 +91,6 @@ def load_conformal(
     predictor.load_state_dict(torch.load(path, map_location=device))
     predictor.to(device)
     predictor.eval()
-    # _calibrated is not a buffer so won't survive state_dict; restore from _q_hat
-    if not predictor._q_hat.isinf():
-        predictor._calibrated = True
     return predictor
 
 
