@@ -44,9 +44,9 @@ def load_model(ckpt_dir, device):
         in_channels=3,
         out_channels=2,
         img_size=(nlat, nlon),
-        patch_size=4,
-        hidden_size=256,
-        n_layers=6,
+        patch_size=ckpt.get("patch_size", 4),
+        hidden_size=ckpt.get("hidden", 256),
+        n_layers=ckpt.get("n_layers", 6),
         num_blocks=8,
     ).to(device)
     model.load_state_dict(ckpt["model_state_dict"])

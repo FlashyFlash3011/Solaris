@@ -25,6 +25,7 @@ import torch.nn as nn
 from data_gen import make_initial_state, simulate
 from torch.utils.data import DataLoader, TensorDataset
 
+from solaris.datapipes import cached_arrays
 from solaris.metrics import relative_l2_error
 from solaris.models.afno import AFNO
 from solaris.utils import get_logger, save_checkpoint
@@ -97,16 +98,22 @@ def train(args):
     lead_days = list(range(1, args.n_days + 1))  # [1, 2, 3, 4, 5]
     nlat, nlon = args.nlat, args.nlon
 
-    cache = Path(args.cache)
-    if cache.exists():
-        log.info(f"Loading cache from {cache}")
-        d = np.load(cache)
-        X, LT, Y = d["X"], d["LT"], d["Y"]
-    else:
-        X, LT, Y = generate_dataset(args.n_sims, args.n_days, lead_days, nlat, nlon, seed=42)
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(cache, X=X, LT=LT, Y=Y)
-        log.info(f"Saved → {cache}")
+    data_cfg = {
+        "n_sims": args.n_sims,
+        "n_days": args.n_days,
+        "lead_days": lead_days,
+        "nlat": nlat,
+        "nlon": nlon,
+        "seed": 42,
+    }
+
+    def _generate():
+        X, LT, Y = generate_dataset(**data_cfg)
+        return {"X": X, "LT": LT, "Y": Y}
+
+    data = cached_arrays(args.cache, data_cfg, _generate)
+    X, LT, Y = data["X"], data["LT"], data["Y"]
+    log.info(f"Dataset: {len(X)} samples (cache: {args.cache})")
 
     # Normalise
     stats = compute_stats(X, Y)
@@ -189,7 +196,17 @@ def train(args):
         if vl < best:
             best = vl
             save_checkpoint(
-                Path(args.checkpoint_dir) / "best_afno.pt", model, opt, sched, epoch, vl
+                Path(args.checkpoint_dir) / "best_afno.pt",
+                model,
+                opt,
+                sched,
+                epoch,
+                vl,
+                extra={
+                    "hidden": args.hidden,
+                    "n_layers": args.n_layers,
+                    "patch_size": args.patch_size,
+                },
             )
 
     log.info(f"Done. Best val={best:.4e}  →  {args.checkpoint_dir}/best_afno.pt")
