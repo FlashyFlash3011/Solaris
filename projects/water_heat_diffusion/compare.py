@@ -37,9 +37,14 @@ def load_model_and_stats(ckpt_dir: str, device: torch.device):
     times = stats["times"].tolist()
 
     ckpt = torch.load(ckpt_dir / "best_fno.pt", map_location=device, weights_only=False)
-    model = FNO(in_channels=2, out_channels=1, hidden_channels=64, n_layers=4, modes=16, dim=2).to(
-        device
-    )
+    model = FNO(
+        in_channels=2,
+        out_channels=1,
+        hidden_channels=ckpt.get("hidden", 64),
+        n_layers=ckpt.get("n_layers", 4),
+        modes=ckpt.get("modes", 16),
+        dim=2,
+    ).to(device)
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
     return model, T_ambient, t_end, times

@@ -26,6 +26,7 @@ import torch.nn as nn
 from solver import make_initial_field, solve_diffusion
 from torch.utils.data import DataLoader, TensorDataset
 
+from solaris.datapipes import cached_arrays
 from solaris.metrics import relative_l2_error
 from solaris.models.fno import FNO
 from solaris.utils import get_logger, save_checkpoint
@@ -86,19 +87,21 @@ def train(args):
     if device.type == "cuda":
         log.info(f"GPU: {torch.cuda.get_device_name(0)}")
 
-    cache = Path(args.cache)
-    if cache.exists():
-        log.info(f"Loading cached dataset from {cache}")
-        d = np.load(cache)
-        T0_arr, t_arr, Tt_arr = d["T0"], d["t"], d["Tt"]
-        times = d["times"]
-    else:
-        T0_arr, t_arr, Tt_arr, times = generate_dataset(
-            args.n_sims, args.resolution, args.t_end, args.n_times, seed=42
-        )
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(cache, T0=T0_arr, t=t_arr, Tt=Tt_arr, times=times)
-        log.info(f"Saved → {cache}")
+    data_cfg = {
+        "n": args.n_sims,
+        "resolution": args.resolution,
+        "t_end": args.t_end,
+        "n_times": args.n_times,
+        "seed": 42,
+    }
+
+    def _generate():
+        T0, t, Tt, times = generate_dataset(**data_cfg)
+        return {"T0": T0, "t": t, "Tt": Tt, "times": times}
+
+    data = cached_arrays(args.cache, data_cfg, _generate)
+    T0_arr, t_arr, Tt_arr, times = data["T0"], data["t"], data["Tt"], data["times"]
+    log.info(f"Dataset: {len(T0_arr)} samples (cache: {args.cache})")
 
     # Work with temperature RISE above ambient.
     # This removes the large constant offset (ambient=20°C) so the model
@@ -187,7 +190,15 @@ def train(args):
 
         if vl < best:
             best = vl
-            save_checkpoint(Path(args.checkpoint_dir) / "best_fno.pt", model, opt, sched, epoch, vl)
+            save_checkpoint(
+                Path(args.checkpoint_dir) / "best_fno.pt",
+                model,
+                opt,
+                sched,
+                epoch,
+                vl,
+                extra={"hidden": args.hidden, "n_layers": args.n_layers, "modes": args.modes},
+            )
 
     log.info(f"Done. Best val={best:.4e}  →  {args.checkpoint_dir}/best_fno.pt")
 
