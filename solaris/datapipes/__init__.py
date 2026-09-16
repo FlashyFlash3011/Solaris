@@ -1,5 +1,6 @@
 from solaris.datapipes.cache import CacheMismatchError, cached_arrays
 from solaris.datapipes.dataset import HDF5Dataset, PhysicsDataset, TensorDataset, build_dataloader
+from solaris.datapipes.splits import split_by_group
 from solaris.datapipes.transforms import (
     AddGaussianNoise,
     Normalize,
@@ -11,6 +12,7 @@ from solaris.datapipes.transforms import (
 __all__ = [
     "cached_arrays",
     "CacheMismatchError",
+    "split_by_group",
     "PhysicsDataset",
     "TensorDataset",
     "HDF5Dataset",
