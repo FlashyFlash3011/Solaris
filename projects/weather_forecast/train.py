@@ -25,7 +25,7 @@ import torch.nn as nn
 from data_gen import make_initial_state, simulate
 from torch.utils.data import DataLoader, TensorDataset
 
-from solaris.datapipes import cached_arrays
+from solaris.datapipes import cached_arrays, split_by_group
 from solaris.metrics import relative_l2_error
 from solaris.models.afno import AFNO
 from solaris.utils import get_logger, save_checkpoint
@@ -115,8 +115,13 @@ def train(args):
     X, LT, Y = data["X"], data["LT"], data["Y"]
     log.info(f"Dataset: {len(X)} samples (cache: {args.cache})")
 
-    # Normalise
-    stats = compute_stats(X, Y)
+    # Each simulation contributes one sample per lead time (same initial state);
+    # keep whole simulations on one side of the split.
+    groups = np.arange(len(X)) // len(lead_days)
+    tr_idx, va_idx = split_by_group(groups, val_fraction=0.15, seed=0)
+
+    # Normalisation statistics from training simulations only
+    stats = compute_stats(X[tr_idx], Y[tr_idx])
     X_n = normalise(X, stats, ["z500", "t850"])
     Y_n = normalise(Y, stats, ["z500", "t850"])
     # Concatenate lead-time channel: (N, 3, H, W)
@@ -131,10 +136,6 @@ def train(args):
         nlon=nlon,
         **stats,
     )
-
-    rng_idx = np.random.default_rng(0).permutation(len(inp))
-    n_val = int(len(inp) * 0.15)
-    tr_idx, va_idx = rng_idx[n_val:], rng_idx[:n_val]
 
     def ds(idx):
         return TensorDataset(torch.as_tensor(inp[idx]), torch.as_tensor(tgt[idx]))
