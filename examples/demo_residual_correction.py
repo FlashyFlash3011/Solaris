@@ -38,68 +38,53 @@ from solaris.models import FNO, NeuralResidualCorrector
 from solaris.utils import get_logger
 
 
-def make_coarse_solver(n_iter: int, tol: float = 1e-3):
-    """Build a coarse Gauss-Seidel FD heat solver as a torch-compatible callable.
+def make_coarse_solver(
+    n_iter: int, Q_mean: float, Q_std: float, T_mean: float, T_std: float, T_ambient: float = 40.0
+):
+    """Build a deliberately under-converged FD heat solver as a torch callable.
 
-    The solver runs only ``n_iter`` iterations — intentionally stopping early
-    to produce an approximate solution that the neural corrector will improve.
+    Runs ``n_iter`` Jacobi sweeps of ``-∇²T = Q`` (``T = T_ambient`` on the
+    boundary, grid spacing ``h = 1/(H-1)`` — the same discretisation as
+    ``projects/chip_thermal/solver.py``) instead of solving to convergence.  The
+    result captures the large-scale physics; the neural corrector learns the
+    remaining error.
+
+    The callable maps *normalised* power maps to *normalised* temperatures so
+    the coarse solution lives in the same space as the training targets.
     """
-    try:
-        from solver import solve_heat
-    except ImportError:
-        # Fallback: trivial Laplacian smoother if chip_thermal not on path
-        def solve_heat(Q, max_iter=10, tol=1e-3):
-            import torch.nn.functional as F_
-
-            T = Q.clone()
-            for _ in range(max_iter):
-                T = F_.avg_pool2d(T.unsqueeze(0).unsqueeze(0), 3, stride=1, padding=1).squeeze()
-            return T, 0, max_iter
 
     def coarse_solver(x: torch.Tensor) -> torch.Tensor:
-        """x: (B, 1, H, W) power map tensor → (B, 1, H, W) coarse temperature."""
-        device = x.device
-        results = []
-        x_np = x.detach().cpu().numpy()
-        for i in range(len(x_np)):
-            Q = x_np[i, 0]
-            T, _, _ = solve_heat(Q, max_iter=n_iter, tol=tol)
-            results.append(T)
-        T_arr = np.stack(results)[:, None].astype(np.float32)
-        return torch.as_tensor(T_arr, device=device)
+        """x: (B, 1, H, W) normalised power map → (B, 1, H, W) normalised temperature."""
+        Q = x.detach() * Q_std + Q_mean
+        H = Q.shape[-2]
+        h2 = (1.0 / (H - 1)) ** 2
+        rise = torch.zeros_like(Q)
+        for _ in range(n_iter):
+            nb = (
+                rise[..., :-2, 1:-1]
+                + rise[..., 2:, 1:-1]
+                + rise[..., 1:-1, :-2]
+                + rise[..., 1:-1, 2:]
+            )
+            interior = (nb + h2 * Q[..., 1:-1, 1:-1]) / 4.0
+            rise = torch.nn.functional.pad(interior, (1, 1, 1, 1))  # boundary rise = 0
+        return (rise + T_ambient - T_mean) / T_std
 
     return coarse_solver
 
 
 def generate_data(n: int, res: int, seed: int = 0):
-    """Generate (power_map, temperature) pairs.  Returns normalised float32 tensors."""
-    try:
-        sys.path.insert(0, str(Path(__file__).parent.parent / "projects" / "chip_thermal"))
-        from solver import random_power_map, solve_heat
-    except ImportError:
-        log = get_logger("data")
-        log.warning("chip_thermal solver not found — using synthetic Gaussian data")
-        rng = np.random.default_rng(seed)
-        from scipy.ndimage import gaussian_filter
-
-        Q_all, T_all = [], []
-        for _ in range(n):
-            Q = np.abs(rng.standard_normal((res, res))).astype(np.float32)
-            Q = gaussian_filter(Q, sigma=res / 16).astype(np.float32)
-            T = gaussian_filter(Q, sigma=res / 8).astype(np.float32)
-            Q_all.append(Q)
-            T_all.append(T)
-        Q_arr = np.stack(Q_all)[:, None]
-        T_arr = np.stack(T_all)[:, None]
-        return Q_arr, T_arr
+    """Generate (power_map, temperature) pairs with the chip_thermal FD solver."""
+    sys.path.insert(0, str(Path(__file__).parent.parent / "projects" / "chip_thermal"))
+    from solver import chip_floorplan_power_map, solve_heat_fd
 
     rng = np.random.default_rng(seed)
     Q_all, T_all = [], []
     log = get_logger("data")
     log.info(f"Generating {n} thermal samples …")
     for i in range(n):
-        Q = random_power_map(res, res, rng=rng)
-        T, _, _ = solve_heat(Q, max_iter=10_000, tol=1e-4)
+        Q = chip_floorplan_power_map(res, res, rng=rng)
+        T, _ = solve_heat_fd(Q)
         Q_all.append(Q)
         T_all.append(T)
         if (i + 1) % max(1, n // 5) == 0:
@@ -120,7 +105,7 @@ def run(args):
         m, s = arr.mean(), arr.std() + 1e-8
         return (arr - m) / s, m, s
 
-    Q_norm, _, _ = norm(Q_arr)
+    Q_norm, Q_mean, Q_std = norm(Q_arr)
     T_norm, T_mean, T_std = norm(T_arr)
 
     Q_t = torch.as_tensor(Q_norm)
@@ -130,8 +115,10 @@ def run(args):
     train_dl = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
     val_dl = DataLoader(val_ds, batch_size=args.batch_size)
 
-    # ── Coarse solver (20 iterations) ──
-    coarse = make_coarse_solver(n_iter=20)
+    # ── Coarse solver: a few hundred Jacobi sweeps (far from converged) ──
+    coarse = make_coarse_solver(
+        args.coarse_iters, float(Q_mean), float(Q_std), float(T_mean), float(T_std)
+    )
 
     # ── Model A: pure FNO surrogate ──
     fno = FNO(
@@ -220,4 +207,5 @@ if __name__ == "__main__":
     p.add_argument("--hidden", type=int, default=32)
     p.add_argument("--modes", type=int, default=12)
     p.add_argument("--n_layers", type=int, default=4)
+    p.add_argument("--coarse_iters", type=int, default=200)
     run(p.parse_args())
