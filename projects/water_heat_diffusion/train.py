@@ -26,7 +26,7 @@ import torch.nn as nn
 from solver import make_initial_field, solve_diffusion
 from torch.utils.data import DataLoader, TensorDataset
 
-from solaris.datapipes import cached_arrays
+from solaris.datapipes import cached_arrays, split_by_group
 from solaris.metrics import relative_l2_error
 from solaris.models.fno import FNO
 from solaris.utils import get_logger, save_checkpoint
@@ -127,15 +127,16 @@ def train(args):
         times=times,
     )
 
-    n_total = len(inp)
-    n_val = int(n_total * 0.15)
-    idx = np.random.default_rng(0).permutation(n_total)
+    # Each simulation contributes n_times consecutive samples (same initial
+    # field, different times); keep whole simulations on one side of the split.
+    groups = np.arange(len(inp)) // args.n_times
+    tr_idx, va_idx = split_by_group(groups, val_fraction=0.15, seed=0)
 
     def to_tensor(a):
         return torch.as_tensor(a, dtype=torch.float32)
 
-    train_ds = TensorDataset(to_tensor(inp[idx[n_val:]]), to_tensor(Tt_n[idx[n_val:]]))
-    val_ds = TensorDataset(to_tensor(inp[idx[:n_val]]), to_tensor(Tt_n[idx[:n_val]]))
+    train_ds = TensorDataset(to_tensor(inp[tr_idx]), to_tensor(Tt_n[tr_idx]))
+    val_ds = TensorDataset(to_tensor(inp[va_idx]), to_tensor(Tt_n[va_idx]))
     train_loader = DataLoader(
         train_ds, args.batch_size, shuffle=True, pin_memory=(device.type == "cuda"), num_workers=2
     )
