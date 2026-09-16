@@ -181,10 +181,17 @@ def generate_dataset(
 ) -> Path:
     """Generate (Q, T) pairs with the chip thermal solver and save to .npz.
 
-    Skipped silently if the file already exists.
+    The default cache file name encodes the generation parameters, so asking
+    for a different size or resolution never silently reuses stale data.  The
+    legacy ``chip_thermal_dataset.npz`` is reused only if its shapes match.
     """
     if out_path is None:
-        out_path = DATA_DIR / "chip_thermal_dataset.npz"
+        out_path = DATA_DIR / f"chip_thermal_{n_train}_{n_test}_{H}x{W}_seed{seed}.npz"
+        legacy = DATA_DIR / "chip_thermal_dataset.npz"
+        if not out_path.exists() and legacy.exists():
+            with np.load(legacy) as d:
+                if d["Q_train"].shape == (n_train, H, W) and d["Q_test"].shape == (n_test, H, W):
+                    return legacy
     if out_path.exists():
         return out_path
 

@@ -260,10 +260,10 @@ def run_comparison(args):
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
-    p.add_argument("--checkpoint", default="checkpoints/best_fno.pt")
+    p.add_argument("--checkpoint", default=str(Path(__file__).parent / "checkpoints/best_fno.pt"))
     p.add_argument("--device", default="cuda")
     p.add_argument("--n_batch", type=int, default=1000, help="Number of new layouts to compare")
     p.add_argument("--batch_size", type=int, default=64, help="GPU batch size for FNO inference")
     p.add_argument("--seed", type=int, default=9999, help="RNG seed (different from training data)")
-    p.add_argument("--output", default="results/compare.png")
+    p.add_argument("--output", default=str(Path(__file__).parent / "results/compare.png"))
     run_comparison(p.parse_args())

@@ -367,6 +367,6 @@ if __name__ == "__main__":
     args = p.parse_args()
 
     if args.checkpoint is None:
-        args.checkpoint = f"checkpoints/best_{args.model}.pt"
+        args.checkpoint = str(Path(__file__).parent / f"checkpoints/best_{args.model}.pt")
 
     calibrate(args)
