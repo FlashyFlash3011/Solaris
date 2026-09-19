@@ -131,7 +131,7 @@ class FNO(Module):
             self.compile_model(mode=compile_mode)
 
     def set_modes(self, new_modes: int) -> None:
-        """Dynamically update the active Fourier mode count (DP curriculum training).
+        """Dynamically update the active Fourier mode count (e.g. for a mode curriculum).
 
         Adjusts ``modes_x/y/z`` on every spectral layer without reallocating
         parameter tensors — the weights are already initialised at full size.
