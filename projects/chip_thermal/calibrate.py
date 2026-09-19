@@ -1,28 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024, Contributors
 # SPDX-License-Identifier: Apache-2.0
 """
-calibrate.py — Conformal calibration with DP-optimized calibration set (Phase 4).
+calibrate.py — Conformal calibration of a trained chip-thermal model.
 
 Wraps the best trained model in ConformalNeuralOperator to produce statistically
-rigorous uncertainty intervals: P(T_true ∈ [T_low, T_high]) ≥ 1-α, guaranteed
-for any model and any data distribution (no distributional assumptions needed).
+rigorous uncertainty intervals: P(T_true ∈ [T_low, T_high]) ≥ 1-α for a new
+layout drawn from the same distribution as the calibration layouts.
 
-DP calibration subset selection
---------------------------------
-Generating calibration data is expensive (requires running the classical FD solver).
-A DP knapsack selects the *smallest* calibration subset from a larger pool that
-still achieves the target coverage guarantee — saving ~30–50% of solver calls vs.
-using the full pool.
-
-DP formulation:
-  items    = calibration pool samples
-  value[i] = marginal coverage improvement from adding sample i
-             (estimated via leave-one-out conformity score spread)
-  weight   = 1 (uniform — each sample costs one FD solve)
-  capacity = target_cal_size (default 150 from 500-sample pool)
-
-Greedy DP (equivalent to optimal for submodular value functions):
-  Sort by marginal value, pick top-k.
+The guarantee needs the calibration layouts to be an ordinary random sample
+(exchangeable with future layouts), so they are freshly generated and used
+as-is — never filtered by how well the model does on them.  Coverage is then
+checked on a separate set of test layouts.
 
 Usage
 -----
@@ -111,59 +99,6 @@ def load_model(
     return model
 
 
-# ─── DP calibration subset selection ─────────────────────────────────────────
-
-
-def dp_select_calibration_set(
-    conformity_scores: np.ndarray,
-    target_size: int,
-) -> np.ndarray:
-    """Select the most informative calibration samples via greedy DP knapsack.
-
-    The value of each sample is its contribution to the spread of the conformity
-    score distribution — samples in sparsely-covered score regions are most
-    valuable for coverage quality.
-
-    DP formulation (greedy, optimal for submodular value):
-      value[i] = how much sample i increases coverage of the score distribution
-                 (measured as the reduction in the largest gap between sorted scores)
-      capacity = target_size
-      solution = top-k samples by marginal value
-
-    Parameters
-    ----------
-    conformity_scores : np.ndarray  shape (N,)
-        Per-sample nonconformity scores (max pixel-wise |pred - true|).
-    target_size : int
-        Number of calibration samples to select.
-
-    Returns
-    -------
-    np.ndarray of selected indices, shape (target_size,)
-    """
-    N = len(conformity_scores)
-    if target_size >= N:
-        return np.arange(N)
-
-    # Sort scores to compute gaps in the empirical CDF
-    sorted_idx = np.argsort(conformity_scores)
-    sorted_scores = conformity_scores[sorted_idx]
-
-    # Value of each sample = size of the gap it would fill
-    # Gaps between consecutive sorted scores (including edges)
-    gaps = np.diff(sorted_scores, prepend=0.0, append=sorted_scores[-1] * 1.01)
-    # Each sample fills the gap on its left
-    values = gaps[:-1]  # gap[i] = gap to the left of sorted sample i
-
-    # Greedy DP: select top-k by value
-    top_k_sorted_positions = np.argsort(values)[::-1][:target_size]
-    selected_original_indices = sorted_idx[top_k_sorted_positions]
-    return selected_original_indices
-
-
-# ─── Main calibration ─────────────────────────────────────────────────────────
-
-
 def calibrate(args):
     log = get_logger("calibrate")
     device = torch.device(
@@ -181,48 +116,18 @@ def calibrate(args):
     model = load_model(Path(args.checkpoint), args.model, device, Q_mean, Q_std, T_mean, T_std)
     log.info(f"Loaded {args.model} model  |  params: {model.num_parameters():,}")
 
-    # ── Generate calibration pool (N_pool new chip layouts) ──
-    log.info(f"Generating calibration pool ({args.pool_size} layouts) …")
+    # ── Generate a fresh random calibration set ──
+    log.info(f"Generating {args.cal_size} calibration layouts …")
     rng = np.random.default_rng(args.seed)
     H = W = args.resolution
-    Q_pool = np.stack([chip_floorplan_power_map(H, W, rng) for _ in range(args.pool_size)])
-    T_pool = np.stack([solve_heat_fd(Q_pool[i])[0] for i in range(args.pool_size)])
-
-    # Normalise
-    Q_pool_n = (Q_pool - Q_mean) / Q_std
-    T_pool_n = (T_pool - T_mean) / T_std
-    Q_t = torch.as_tensor(Q_pool_n[:, None], dtype=torch.float32)
-    T_t = torch.as_tensor(T_pool_n[:, None], dtype=torch.float32)
-
-    # ── Compute nonconformity scores for the full pool ──
-    log.info("Computing conformity scores for DP subset selection …")
-    scores_all = []
-    model.eval()
-    with torch.no_grad():
-        for i in range(0, len(Q_t), 32):
-            Q_b = Q_t[i : i + 32].to(device)
-            T_b = T_t[i : i + 32].to(device)
-            pred = model(Q_b)
-            score = (pred - T_b).abs().flatten(1).max(dim=1).values
-            scores_all.append(score.cpu().numpy())
-    scores_np = np.concatenate(scores_all)  # (pool_size,)
-
-    # ── DP subset selection ──
-    selected = dp_select_calibration_set(scores_np, target_size=args.cal_size)
-    log.info(
-        f"DP selected {len(selected)} / {args.pool_size} samples  "
-        f"(score range: [{scores_np[selected].min():.4f}, {scores_np[selected].max():.4f}], "
-        f"pool range: [{scores_np.min():.4f}, {scores_np.max():.4f}])"
-    )
+    Q_cal = np.stack([chip_floorplan_power_map(H, W, rng) for _ in range(args.cal_size)])
+    T_cal = np.stack([solve_heat_fd(Q_cal[i])[0] for i in range(args.cal_size)])
+    Q_t = torch.as_tensor(((Q_cal - Q_mean) / Q_std)[:, None], dtype=torch.float32)
+    T_t = torch.as_tensor(((T_cal - T_mean) / T_std)[:, None], dtype=torch.float32)
 
     # ── Calibrate ConformalNeuralOperator ──
     conformal = ConformalNeuralOperator(model)
-    q_hat = conformal.calibrate(
-        Q_t[selected].to(device),
-        T_t[selected].to(device),
-        alpha=args.alpha,
-        batch_size=32,
-    )
+    q_hat = conformal.calibrate(Q_t.to(device), T_t.to(device), alpha=args.alpha, batch_size=32)
     log.info(
         f"Calibrated q̂ = {q_hat:.4f}  (α={args.alpha}, coverage target ≥ {1 - args.alpha:.0%})"
     )
@@ -241,7 +146,7 @@ def calibrate(args):
     log.info("")
     log.info("=" * 60)
     log.info(f"  Model              : {args.model}")
-    log.info(f"  Calibration set    : {len(selected)} samples (DP-selected from {args.pool_size})")
+    log.info(f"  Calibration set    : {args.cal_size} random layouts")
     log.info(f"  Coverage target    : ≥ {1 - args.alpha:.0%}  (α={args.alpha})")
     log.info(f"  Empirical coverage : {report['coverage']:.1%}")
     log.info(f"  Interval width     : {report['mean_interval_width']:.4f} (normalised)")
@@ -251,19 +156,18 @@ def calibrate(args):
 
     # ── Save conformal artefacts ──
     ckpt_dir = Path(args.checkpoint).parent
+    ckpt_meta = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
     save_path = ckpt_dir / f"conformal_{args.model}.pt"
     torch.save(
         {
             "q_hat": report["q_hat"],
             "alpha": args.alpha,
-            "cal_indices": selected,
+            "cal_size": args.cal_size,
             "coverage": report["coverage"],
             "model_type": args.model,
-            "hidden_channels": torch.load(args.checkpoint, weights_only=False).get(
-                "hidden_channels", 64
-            ),
-            "n_layers": torch.load(args.checkpoint, weights_only=False).get("n_layers", 4),
-            "modes": torch.load(args.checkpoint, weights_only=False).get("modes", 16),
+            "hidden_channels": ckpt_meta.get("hidden_channels", 64),
+            "n_layers": ckpt_meta.get("n_layers", 4),
+            "modes": ckpt_meta.get("modes", 16),
             "resolution": args.resolution,
         },
         save_path,
@@ -348,12 +252,7 @@ if __name__ == "__main__":
     )
     p.add_argument("--device", default="cuda")
     p.add_argument("--resolution", type=int, default=128)
-    p.add_argument(
-        "--pool_size", type=int, default=500, help="Size of calibration pool to generate"
-    )
-    p.add_argument(
-        "--cal_size", type=int, default=150, help="Target calibration set size after DP selection"
-    )
+    p.add_argument("--cal_size", type=int, default=200, help="Number of random calibration layouts")
     p.add_argument(
         "--test_size",
         type=int,
