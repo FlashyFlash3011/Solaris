@@ -28,7 +28,7 @@ from torch.utils.data import DataLoader, TensorDataset
 sys.path.insert(0, str(Path(__file__).parent))
 from solver import random_gaussian_ic, solve_wave_snapshots  # noqa: E402
 
-from solaris.datapipes import cached_arrays
+from solaris.datapipes import cached_arrays, split_by_group
 from solaris.metrics import relative_l2_error
 from solaris.models.fno import FNO
 from solaris.nn.embeddings import SinusoidalTimestepEmbedding
@@ -142,13 +142,14 @@ def train(args):
         tgt_std=tgt_std,
     )
 
-    n_total = len(inputs_norm)
-    n_train = int(n_total * 0.8)
+    # Samples are stored simulation by simulation; split whole simulations.
+    groups = np.arange(len(inputs_norm)) // (args.n_snapshots - 1)
+    tr_idx, va_idx = split_by_group(groups, val_fraction=0.2, seed=0)
     inp_t = torch.as_tensor(inputs_norm, dtype=torch.float32)
     tgt_t = torch.as_tensor(targets_norm, dtype=torch.float32)
 
-    train_ds = TensorDataset(inp_t[:n_train], tgt_t[:n_train])
-    val_ds = TensorDataset(inp_t[n_train:], tgt_t[n_train:])
+    train_ds = TensorDataset(inp_t[tr_idx], tgt_t[tr_idx])
+    val_ds = TensorDataset(inp_t[va_idx], tgt_t[va_idx])
     train_loader = DataLoader(
         train_ds, batch_size=args.batch_size, shuffle=True, pin_memory=(device.type == "cuda")
     )
