@@ -115,3 +115,15 @@ def test_spectral_band_filter_covers_highest_frequency():
         f.band_weights.fill_(50.0)  # sigmoid(50) == 1 → filter should be identity
     x = torch.randn(1, 1, 16, 16)
     torch.testing.assert_close(f(x), x, atol=1e-5, rtol=1e-5)
+
+
+@pytest.mark.parametrize("H,W", [(16, 16), (15, 17), (16, 9), (8, 32)])
+def test_divergence_free_projection_is_exact_including_nyquist(H, W):
+    from solaris.nn import DivergenceFreeProjection2d
+
+    u = torch.randn(3, 2, H, W)
+    p = DivergenceFreeProjection2d()(u)
+    kx = torch.fft.fftfreq(H).reshape(H, 1)
+    ky = torch.fft.rfftfreq(W).reshape(1, -1)
+    div = kx * torch.fft.rfft2(p[:, 0]) + ky * torch.fft.rfft2(p[:, 1])
+    assert div.abs().max() < 1e-4

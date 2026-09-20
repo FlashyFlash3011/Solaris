@@ -33,11 +33,20 @@ def _helmholtz_split(u: torch.Tensor, eps: float) -> tuple[torch.Tensor, torch.T
         # in the divergence-free part.
         proj = (kx * ux_ft + ky * uy_ft) / k2
         proj[:, 0, 0] = 0.0
+        cfx_ft, cfy_ft = proj * kx, proj * ky
+
+        # For even W the last rfft column is the Nyquist frequency, where a real
+        # field cannot carry the i·k derivative, so the split is undefined there.
+        # Assign those modes wholly to the curl-free part: the divergence-free
+        # part then has exactly zero divergence, and df + cf == u still holds.
+        if W % 2 == 0:
+            cfx_ft[..., -1] = ux_ft[..., -1]
+            cfy_ft[..., -1] = uy_ft[..., -1]
 
         cf = torch.stack(
             [
-                torch.fft.irfft2(proj * kx, s=(H, W), norm="ortho"),
-                torch.fft.irfft2(proj * ky, s=(H, W), norm="ortho"),
+                torch.fft.irfft2(cfx_ft, s=(H, W), norm="ortho"),
+                torch.fft.irfft2(cfy_ft, s=(H, W), norm="ortho"),
             ],
             dim=1,
         )
