@@ -367,3 +367,31 @@ def test_conformal_qhat_infinite_when_calibration_set_too_small():
     cal_y = torch.ones(5, 1)
     q = ConformalNeuralOperator(_Identity()).calibrate(cal_x, cal_y, alpha=0.1)
     assert math.isinf(q)
+
+
+# --- MultiScaleFNO frequency bands --------------------------------------------
+
+
+def _band_counts(model, H, W):
+    convs = model.blocks[0].band_convs
+    return [int(c.band_mask(H, W).sum()) for c in convs]
+
+
+@pytest.mark.parametrize("res", [64, 128, 256])
+def test_multiscale_every_band_gets_modes(res):
+    model = MultiScaleFNO(1, 1, hidden_channels=4, n_layers=1, n_scales=3, max_modes=16)
+    counts = _band_counts(model, res, res)
+    assert min(counts) >= 32  # each head sees a substantial share (was 1 or 0 before)
+
+
+def test_multiscale_bands_are_resolution_invariant():
+    model = MultiScaleFNO(1, 1, hidden_channels=4, n_layers=1, n_scales=3, max_modes=16)
+    assert _band_counts(model, 64, 64) == _band_counts(model, 256, 256)
+
+
+def test_multiscale_bands_partition_the_retained_block():
+    model = MultiScaleFNO(1, 1, hidden_channels=4, n_layers=1, n_scales=3, max_modes=8)
+    masks = [c.band_mask(32, 32) for c in model.blocks[0].band_convs]
+    total = sum(m.int() for m in masks)
+    assert total.max() == 1  # no mode in two bands
+    assert int(total.sum()) == 2 * 8 * 8  # positive + negative kx quadrants, 8x8 each

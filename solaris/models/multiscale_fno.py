@@ -34,19 +34,25 @@ from solaris.core.module import Module
 
 
 class BandSpectralConv2d(nn.Module):
-    """Spectral convolution restricted to a wavenumber band [k_min, k_max).
+    """Spectral convolution restricted to a band of Fourier modes.
 
-    Unlike ``SpectralConv2d`` (which always takes the *lowest* N modes),
-    this layer operates on a specific band in wavenumber magnitude space so
-    that each MultiScaleFNO head truly specialises on a distinct frequency range.
+    The layer keeps the usual FNO block of the lowest ``max_modes`` modes per
+    axis (both signs of k_x), and of those only uses the modes whose *mode
+    index radius* ``r = sqrt(i_x² + i_y²)`` lies in ``[k_min, k_max)``.
+
+    Bands are defined in mode-index units (the n-th Fourier mode), not as a
+    fraction of the grid's Nyquist frequency, so a band selects the same
+    physical scales — and the same weights — at every resolution.
 
     Parameters
     ----------
     in_channels, out_channels : int
     k_min, k_max : float
-        Inclusive lower / exclusive upper bound on the wavenumber magnitude.
+        Inclusive lower / exclusive upper bound on the mode-index radius.
+        ``k_max = inf`` makes the band open-ended (it takes the corners of the
+        retained block).
     max_modes : int
-        Maximum number of modes kept per axis (caps memory usage).
+        Modes kept per axis (the same block a ``SpectralConv2d`` would keep).
     """
 
     def __init__(
@@ -73,6 +79,24 @@ class BandSpectralConv2d(nn.Module):
             scale * torch.rand(in_channels, out_channels, m, m, dtype=torch.cfloat)
         )
 
+    def _block(self, H: int, W: int) -> tuple[int, int]:
+        """Size of the retained block, clamped to what the grid can represent."""
+        return min(self.max_modes, H // 2), min(self.max_modes, W // 2 + 1)
+
+    def band_mask(self, H: int, W: int, device: torch.device | None = None) -> torch.Tensor:
+        """Boolean mask over the ``(H, W//2+1)`` rfft2 spectrum of this band's modes."""
+        ix = torch.fft.fftfreq(H, d=1.0 / H, device=device).reshape(H, 1)  # signed index
+        iy = torch.arange(W // 2 + 1, device=device, dtype=ix.dtype).reshape(1, -1)
+        r = (ix**2 + iy**2).sqrt()
+        in_band = (r >= self.k_min) & (r < self.k_max)
+
+        mx, my = self._block(H, W)
+        retained = torch.zeros(H, W // 2 + 1, dtype=torch.bool, device=device)
+        if mx > 0:
+            retained[:mx, :my] = True
+            retained[-mx:, :my] = True
+        return in_band & retained
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # fp16 FFTs are unsupported on CPU and for non-power-of-2 GPU sizes
         with torch.amp.autocast(device_type=x.device.type, enabled=False):
@@ -82,33 +106,22 @@ class BandSpectralConv2d(nn.Module):
     def _forward_fp32(self, x: torch.Tensor) -> torch.Tensor:
         B, C, H, W = x.shape
         x_ft = torch.fft.rfft2(x, norm="ortho")
-
-        kx = torch.fft.fftfreq(H, device=x.device).reshape(H, 1)
-        ky = torch.fft.rfftfreq(W, device=x.device).reshape(1, W // 2 + 1)
-        k_mag = (kx**2 + ky**2).sqrt()
-
-        k_max_val = self.k_max if self.k_max < float("inf") else k_mag.max().item() + 1.0
-        band_mask = (k_mag >= self.k_min) & (k_mag < k_max_val)  # (H, W//2+1)
-
-        # Clamp the retained block to what the grid can represent
-        mx = min(self.max_modes, H // 2)
-        my = min(self.max_modes, W // 2 + 1)
         out_ft = torch.zeros(B, self.out_channels, H, W // 2 + 1, dtype=x_ft.dtype, device=x.device)
+        mx, my = self._block(H, W)
         if mx == 0:
             return torch.fft.irfft2(out_ft, s=(H, W), norm="ortho")
+
+        mask = self.band_mask(H, W, device=x.device).to(x_ft.dtype)
         w1 = self.weights1[:, :, :mx, :my].to(x_ft.dtype)
         w2 = self.weights2[:, :, :mx, :my].to(x_ft.dtype)
 
-        # Positive-kx quadrant
-        r1_mask = band_mask[:mx, :my].unsqueeze(0).unsqueeze(0)
-        region1 = x_ft[:, :, :mx, :my] * r1_mask
-        out_ft[:, :, :mx, :my] = torch.einsum("bixy,ioxy->boxy", region1, w1)
-
-        # Negative-kx quadrant
-        r2_mask = band_mask[-mx:, :my].unsqueeze(0).unsqueeze(0)
-        region2 = x_ft[:, :, -mx:, :my] * r2_mask
-        out_ft[:, :, -mx:, :my] = torch.einsum("bixy,ioxy->boxy", region2, w2)
-
+        # Positive-k_x rows, then negative-k_x rows of the retained block
+        out_ft[:, :, :mx, :my] = torch.einsum(
+            "bixy,ioxy->boxy", x_ft[:, :, :mx, :my] * mask[:mx, :my], w1
+        )
+        out_ft[:, :, -mx:, :my] = torch.einsum(
+            "bixy,ioxy->boxy", x_ft[:, :, -mx:, :my] * mask[-mx:, :my], w2
+        )
         return torch.fft.irfft2(out_ft, s=(H, W), norm="ortho")
 
 
@@ -210,7 +223,9 @@ class MultiScaleFNO(Module):
     n_scales : int
         Number of frequency bands.  Default 3 (low / mid / high).
     max_modes : int
-        Fourier modes kept per band per axis.
+        Fourier modes kept per axis.  The retained block is split into
+        ``n_scales`` rings of equal width in mode-index radius, so each band
+        covers the same physical scales at every resolution.
     """
 
     _meta = ModelMetaData(
@@ -231,8 +246,9 @@ class MultiScaleFNO(Module):
         super().__init__(meta=self._meta)
         self.n_scales = n_scales
 
-        # Evenly partition [0, 0.5] into n_scales bands; last band is open-ended
-        edges = [i / n_scales * 0.5 for i in range(n_scales + 1)]
+        # Equal-width rings in mode-index radius over [0, max_modes); the last
+        # band is open-ended so it also takes the corners of the retained block.
+        edges = [i * max_modes / n_scales for i in range(n_scales + 1)]
         edges[-1] = float("inf")
 
         self.lift = nn.Conv2d(in_channels, hidden_channels, 1)
