@@ -1,5 +1,6 @@
 from solaris.nn.activations import CappedGELU, CappedLeakyReLU, Siren, Stan
 from solaris.nn.constraints import (
+    BoundaryValueProjection,
     ConservationProjection,
     CurlFreeProjection2d,
     DirichletBCLayer,
@@ -26,5 +27,6 @@ __all__ = [
     "NeumannBCLayer",
     "DirichletBCLayer",
     "ConservationProjection",
+    "BoundaryValueProjection",
     "SpectralBandFilter",
 ]

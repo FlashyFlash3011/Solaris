@@ -223,6 +223,30 @@ class CurlFreeProjection2d(nn.Module):
         return _helmholtz_split(u, self.eps)[1]
 
 
+class BoundaryValueProjection(nn.Module):
+    """Set every edge pixel of a ``(B, C, ..., H, W)`` field to a fixed value.
+
+    A hard Dirichlet boundary condition that works at any resolution (unlike
+    :class:`DirichletBCLayer`, which stores a full boundary map of one size).
+    The interior is unchanged.
+
+    Parameters
+    ----------
+    value : float
+        Boundary value, in the same units as the field.
+    """
+
+    def __init__(self, value: float = 0.0) -> None:
+        super().__init__()
+        self.value = float(value)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        H, W = x.shape[-2:]
+        interior = torch.zeros(H, W, dtype=torch.bool, device=x.device)
+        interior[1:-1, 1:-1] = True
+        return torch.where(interior, x, torch.full_like(x, self.value))
+
+
 class NeumannBCLayer(nn.Module):
     """Enforce zero-flux (Neumann) boundary conditions on selected spatial dims.
 
