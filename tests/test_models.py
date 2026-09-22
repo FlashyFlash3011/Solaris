@@ -439,3 +439,41 @@ def test_constrained_fno_conservative_multiplicative_mode():
 def test_constrained_fno_rejects_unexpected_kwargs():
     with pytest.raises(ValueError):
         ConstrainedFNO(1, 1, 8, 1, 4, constraint="none", boundary_value=1.0)
+
+
+# --- CoupledOperator keeps operator constraints ---------------------------------
+
+
+def _strongly_coupled(ops, channels, mode="learned"):
+    model = CoupledOperator(ops, channels, coupling_mode=mode)
+    if mode == "learned":
+        with torch.no_grad():  # move away from the uncoupled initialisation
+            for layer in model.coupling_layers:
+                layer.coupling_weights.fill_(3.0)
+            for conv in model.unadapters.values():
+                conv.weight.normal_()
+                conv.bias.normal_()
+    return model
+
+
+@pytest.mark.parametrize("mode", ["learned", "sequential"])
+def test_coupled_operator_preserves_conservation(mode):
+    ops = {
+        "a": ConstrainedFNO(1, 1, 8, 1, 4, constraint="conservative"),
+        "b": FNO(1, 1, 8, 1, 4),
+    }
+    model = _strongly_coupled(ops, {"a": 1, "b": 1}, mode)
+    x = {"a": torch.randn(2, 1, 16, 16), "b": torch.randn(2, 1, 16, 16)}
+    out = model(x)
+    torch.testing.assert_close(out["a"].sum(dim=(1, 2, 3)), x["a"].sum(dim=(1, 2, 3)))
+
+
+@pytest.mark.parametrize("mode", ["learned", "sequential"])
+def test_coupled_operator_preserves_divergence_free(mode):
+    ops = {
+        "t": FNO(1, 2, 8, 1, 4),
+        "u": ConstrainedFNO(1, 2, 8, 1, 4, constraint="divergence_free"),
+    }
+    model = _strongly_coupled(ops, {"t": 2, "u": 2}, mode)
+    x = {"t": torch.randn(2, 1, 16, 16), "u": torch.randn(2, 1, 16, 16)}
+    assert _spectral_divergence(model(x)["u"]) < 1e-4

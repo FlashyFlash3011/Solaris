@@ -14,9 +14,15 @@ Coupling modes
 ``"sequential"``
     Each operator's output is added (scaled by 0.1, channel-aligned) to the
     next operator's output.  No extra parameters; a crude one-directional
-    baseline.  Note that it — like ``"learned"`` — post-processes operator
-    outputs, so hard constraints enforced inside an operator (e.g. a
-    ``ConstrainedFNO``) are no longer guaranteed on the coupled output.
+    baseline.
+
+Hard constraints
+----------------
+``"learned"`` and ``"sequential"`` modify operator outputs after the fact.
+Any operator exposing ``apply_constraint(input, output)`` (such as
+:class:`~solaris.models.ConstrainedFNO`) has its constraint re-applied to the
+coupled output, so divergence-free / conservative / boundary / non-negative
+guarantees still hold on what ``CoupledOperator`` returns.
 
 ``"learned"``
     A ``LearnedCouplingLayer`` discovers which fields influence which others
@@ -219,6 +225,15 @@ class CoupledOperator(Module):
                 outputs[name] = outputs[name] + delta
 
         # "direct" mode: return independent outputs unchanged
+
+        # Coupling post-processes operator outputs, which would break any hard
+        # constraint an operator enforces internally (e.g. ConstrainedFNO).
+        # Re-project each such output so the guarantee holds on what we return.
+        if self.coupling_mode != "direct":
+            for name in self.field_names:
+                op = self.operators[name]
+                if hasattr(op, "apply_constraint"):
+                    outputs[name] = op.apply_constraint(inputs[name], outputs[name])
         return outputs
 
     def coupling_strengths(self) -> torch.Tensor | None:
