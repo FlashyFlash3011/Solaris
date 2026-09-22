@@ -5,30 +5,50 @@
 
 Standard PINNs *penalise* constraint violations via loss terms — the network
 can still produce outputs that break physics, just less so.  ConstrainedFNO
-*enforces* constraints at the architecture level: the output is mathematically
-guaranteed to satisfy the specified physical law regardless of network weights.
+*enforces* constraints at the architecture level: the output satisfies the
+specified law exactly, for any network weights.
 
 Supported constraints
 ---------------------
 ``"divergence_free"``
-    Output velocity field (2 channels) satisfies ∇·u = 0 exactly.
-    Enforced via Helmholtz decomposition in Fourier space.  Zero extra params.
+    Output velocity field (2 channels) satisfies ∇·u = 0 exactly (periodic
+    domain), via Helmholtz projection in Fourier space.  Zero extra params.
 
 ``"conservative"``
-    Output field has the same total spatial integral as the input, enforcing
-    global conservation of mass / energy.  Zero extra params.
+    The spatial integral of output channel 0 equals that of input channel 0
+    (global conservation of mass / energy / volume).  Only meaningful when
+    both channels are in the same physical units.
+
+``"dirichlet"``
+    Every boundary pixel of the output equals ``boundary_value`` (e.g. a fixed
+    ambient temperature on the domain edge).
+
+``"nonnegative"``
+    Output is ≥ 0 everywhere (depths, densities, concentrations), via a
+    smooth softplus so gradients never vanish.
 
 ``"none"``
-    No constraint — identical to standard FNO.
+    No constraint — identical to a standard 2-D FNO.
+
+Use :meth:`ConstrainedFNO.apply_constraint` to re-impose the constraint on an
+output that was modified afterwards; :class:`~solaris.models.CoupledOperator`
+does this automatically after coupling.
 """
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from solaris.core.meta import ModelMetaData
 from solaris.core.module import Module
 from solaris.models.fno import FNOBlock2d
-from solaris.nn.constraints import ConservationProjection, DivergenceFreeProjection2d
+from solaris.nn.constraints import (
+    BoundaryValueProjection,
+    ConservationProjection,
+    DivergenceFreeProjection2d,
+)
+
+CONSTRAINTS = ("divergence_free", "conservative", "dirichlet", "nonnegative", "none")
 
 
 class ConstrainedFNO(Module):
@@ -43,7 +63,14 @@ class ConstrainedFNO(Module):
     modes : int or list[int]
         Fourier modes per spatial dimension (2-D only).
     constraint : str
-        One of ``"divergence_free"``, ``"conservative"``, or ``"none"``.
+        One of ``"divergence_free"``, ``"conservative"``, ``"dirichlet"``,
+        ``"nonnegative"`` or ``"none"``.
+    boundary_value : float, optional
+        Required for (and only accepted with) ``constraint="dirichlet"``.
+    conservation_mode : str, optional
+        ``"additive"`` (default) or ``"multiplicative"``; only accepted with
+        ``constraint="conservative"``.  See
+        :class:`~solaris.nn.ConservationProjection`.
     """
 
     _meta = ModelMetaData(
@@ -60,8 +87,16 @@ class ConstrainedFNO(Module):
         n_layers: int = 4,
         modes: int | list[int] = 12,
         constraint: str = "divergence_free",
+        boundary_value: float | None = None,
+        conservation_mode: str | None = None,
     ) -> None:
         super().__init__(meta=self._meta)
+        if constraint not in CONSTRAINTS:
+            raise ValueError(f"Unknown constraint: {constraint!r}; expected one of {CONSTRAINTS}")
+        if boundary_value is not None and constraint != "dirichlet":
+            raise ValueError("boundary_value is only used with constraint='dirichlet'")
+        if conservation_mode is not None and constraint != "conservative":
+            raise ValueError("conservation_mode is only used with constraint='conservative'")
         if isinstance(modes, int):
             modes = [modes, modes]
 
@@ -78,18 +113,23 @@ class ConstrainedFNO(Module):
             nn.Conv2d(hidden_channels * 4, out_channels, 1),
         )
 
-        # Constraint layer — zero learnable parameters for "divergence_free"
+        # Constraint layer — none of them has learnable parameters
         if constraint == "divergence_free":
-            assert out_channels == 2, (
-                "divergence_free constraint requires out_channels=2 (u_x, u_y)"
-            )
+            if out_channels != 2:
+                raise ValueError("divergence_free constraint requires out_channels=2 (u_x, u_y)")
             self.constraint_layer: nn.Module = DivergenceFreeProjection2d()
         elif constraint == "conservative":
-            self.constraint_layer = ConservationProjection(source_channel=0, output_channel=0)
-        elif constraint == "none":
-            self.constraint_layer = nn.Identity()
+            self.constraint_layer = ConservationProjection(
+                source_channel=0, output_channel=0, mode=conservation_mode or "additive"
+            )
+        elif constraint == "dirichlet":
+            if boundary_value is None:
+                raise ValueError("constraint='dirichlet' requires boundary_value")
+            self.constraint_layer = BoundaryValueProjection(boundary_value)
+        elif constraint == "nonnegative":
+            self.constraint_layer = nn.Softplus()
         else:
-            raise ValueError(f"Unknown constraint: {constraint!r}")
+            self.constraint_layer = nn.Identity()
 
         self._capture_init_args(
             in_channels=in_channels,
@@ -98,20 +138,29 @@ class ConstrainedFNO(Module):
             n_layers=n_layers,
             modes=modes,
             constraint=constraint,
+            boundary_value=boundary_value,
+            conservation_mode=conservation_mode,
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        source = x  # keep reference for conservative constraint
+    def apply_constraint(self, x: torch.Tensor, out: torch.Tensor) -> torch.Tensor:
+        """Project ``out`` back onto this model's constraint (``x`` = model input).
 
+        Used after ``out`` has been modified downstream (e.g. by coupling).
+        Every projection is idempotent: applying it to an output that already
+        satisfies the constraint leaves it unchanged.  For ``"nonnegative"``
+        the projection is ``relu`` (the forward pass uses a smooth softplus).
+        """
+        if self.constraint == "conservative":
+            return self.constraint_layer(x, out)
+        if self.constraint == "nonnegative":
+            return F.relu(out)
+        return self.constraint_layer(out)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         h = self.lift(x)
         for block in self.blocks:
             h = block(h)
         out = self.proj(h)
-
-        if self.constraint == "divergence_free":
-            out = self.constraint_layer(out)
-        elif self.constraint == "conservative":
-            out = self.constraint_layer(source, out)
-        # "none" — no-op
-
-        return out
+        if self.constraint == "conservative":
+            return self.constraint_layer(x, out)
+        return self.constraint_layer(out)

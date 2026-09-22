@@ -395,3 +395,47 @@ def test_multiscale_bands_partition_the_retained_block():
     total = sum(m.int() for m in masks)
     assert total.max() == 1  # no mode in two bands
     assert int(total.sum()) == 2 * 8 * 8  # positive + negative kx quadrants, 8x8 each
+
+
+# --- ConstrainedFNO: boundary and positivity constraints ------------------------
+
+
+def _spectral_divergence(u):
+    H, W = u.shape[-2:]
+    kx = torch.fft.fftfreq(H).reshape(H, 1)
+    ky = torch.fft.rfftfreq(W).reshape(1, -1)
+    div = kx * torch.fft.rfft2(u[:, 0]) + ky * torch.fft.rfft2(u[:, 1])
+    return div.abs().max()
+
+
+def test_constrained_fno_dirichlet_sets_boundary_exactly():
+    model = ConstrainedFNO(1, 1, 8, 1, 4, constraint="dirichlet", boundary_value=-1.25)
+    out = model(torch.randn(2, 1, 16, 20))
+    for edge in (out[..., 0, :], out[..., -1, :], out[..., :, 0], out[..., :, -1]):
+        assert torch.all(edge == -1.25)
+
+
+def test_constrained_fno_dirichlet_leaves_interior_free():
+    model = ConstrainedFNO(1, 1, 8, 1, 4, constraint="dirichlet", boundary_value=0.0)
+    out = model(torch.randn(2, 1, 16, 16))
+    assert out[..., 1:-1, 1:-1].abs().sum() > 0
+
+
+def test_constrained_fno_nonnegative():
+    model = ConstrainedFNO(1, 1, 8, 1, 4, constraint="nonnegative")
+    out = model(torch.randn(4, 1, 16, 16) * 10)
+    assert (out >= 0).all()
+    out.sum().backward()  # differentiable everywhere
+
+
+def test_constrained_fno_conservative_multiplicative_mode():
+    model = ConstrainedFNO(
+        1, 1, 8, 1, 4, constraint="conservative", conservation_mode="multiplicative"
+    )
+    x = torch.rand(2, 1, 16, 16) + 0.1
+    torch.testing.assert_close(model(x).sum(dim=(1, 2, 3)), x.sum(dim=(1, 2, 3)))
+
+
+def test_constrained_fno_rejects_unexpected_kwargs():
+    with pytest.raises(ValueError):
+        ConstrainedFNO(1, 1, 8, 1, 4, constraint="none", boundary_value=1.0)
