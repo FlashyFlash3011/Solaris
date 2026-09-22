@@ -477,3 +477,24 @@ def test_coupled_operator_preserves_divergence_free(mode):
     model = _strongly_coupled(ops, {"t": 2, "u": 2}, mode)
     x = {"t": torch.randn(2, 1, 16, 16), "u": torch.randn(2, 1, 16, 16)}
     assert _spectral_divergence(model(x)["u"]) < 1e-4
+
+
+def test_conformal_coverage_is_valid_on_average():
+    """Split-conformal guarantee: mean coverage over many calibration draws >= 1-alpha.
+
+    The model is a fixed, imperfect predictor (identity) on y = x + noise, so
+    scores are i.i.d.; averaged over 400 independent cal/test draws the
+    empirical coverage must sit at or just above 90%.
+    """
+    torch.manual_seed(0)
+    model = ConformalNeuralOperator(_Identity())
+    coverages = []
+    for _ in range(400):
+        x_cal, x_test = torch.randn(50, 1, 4), torch.randn(200, 1, 4)
+        y_cal = x_cal + 0.3 * torch.randn_like(x_cal)
+        y_test = x_test + 0.3 * torch.randn_like(x_test)
+        model.calibrate(x_cal, y_cal, alpha=0.1)
+        coverages.append(model.coverage_report(x_test, y_test)["coverage"])
+    mean = sum(coverages) / len(coverages)
+    # theory: E[coverage] = ceil(51*0.9)/51 = 0.902; 400 draws give s.e. ~0.002
+    assert 0.895 <= mean <= 0.915
