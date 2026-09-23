@@ -140,9 +140,13 @@ def _laplacian_matrix(H: int, W: int) -> sp.csr_matrix:
 # ─── Solver ──────────────────────────────────────────────────────────────────
 
 
+# Package boundary temperature [°C]: the Dirichlet value on every edge.
+T_AMBIENT = 40.0
+
+
 def solve_heat_fd(
     Q: np.ndarray,
-    T_ambient: float = 40.0,
+    T_ambient: float = T_AMBIENT,
 ) -> tuple[np.ndarray, float]:
     """Solve -∇²T = Q  with T = T_ambient on ∂Ω  using scipy sparse (LU).
 

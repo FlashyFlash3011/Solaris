@@ -47,7 +47,7 @@ from torch.utils.data import DataLoader, TensorDataset
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from solver import generate_dataset, solve_heat_fd
+from solver import T_AMBIENT, generate_dataset, solve_heat_fd
 
 from solaris.metrics import relative_l2_error
 from solaris.models.constrained_fno import ConstrainedFNO
@@ -152,9 +152,20 @@ def make_coarse_solver(
 
 
 def build_model(
-    model_type: str, hidden: int, n_layers: int, modes: int, grad_ckpt: bool, coarse_solver=None
+    model_type: str,
+    hidden: int,
+    n_layers: int,
+    modes: int,
+    grad_ckpt: bool = False,
+    coarse_solver=None,
+    boundary_value: float | None = None,
 ):
-    """Instantiate the requested model variant."""
+    """Instantiate the requested model variant.
+
+    ``boundary_value`` is the *normalised* package-edge temperature
+    ``(T_AMBIENT - T_mean) / T_std``; the ``"constrained"`` model enforces it
+    exactly on every boundary pixel (the solver's Dirichlet condition).
+    """
     if model_type == "fno":
         return FNO(
             in_channels=1,
@@ -172,7 +183,8 @@ def build_model(
             hidden_channels=hidden,
             n_layers=n_layers,
             modes=modes,
-            constraint="conservative",
+            constraint="dirichlet",
+            boundary_value=boundary_value,
         )
     elif model_type == "residual":
         assert coarse_solver is not None, "coarse_solver required for residual model"
@@ -489,6 +501,7 @@ def train(args):
         args.modes,
         args.grad_ckpt,
         coarse_solver,
+        boundary_value=(T_AMBIENT - T_mean) / T_std,
     ).to(device)
     log.info(f"Model: {args.model}  |  parameters: {model.num_parameters():,}")
 
@@ -545,6 +558,7 @@ def _run_tuning(args, to_loader, arrays, device, ckpt_dir, Q_mean, Q_std, T_mean
             params["modes"],
             False,
             coarse_solver,
+            boundary_value=(T_AMBIENT - T_mean) / T_std,
         ).to(device)
         return train_one_run(
             model,

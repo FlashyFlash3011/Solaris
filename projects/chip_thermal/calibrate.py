@@ -34,13 +34,10 @@ import torch
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from solver import chip_floorplan_power_map, solve_heat_fd
-from train import make_coarse_solver
+from solver import T_AMBIENT, chip_floorplan_power_map, solve_heat_fd
+from train import build_model, make_coarse_solver
 
 from solaris.models.conformal import ConformalNeuralOperator
-from solaris.models.constrained_fno import ConstrainedFNO
-from solaris.models.fno import FNO
-from solaris.models.residual_corrector import NeuralResidualCorrector
 from solaris.utils import get_logger
 
 # ─── Model loading ───────────────────────────────────────────────────────────
@@ -61,39 +58,17 @@ def load_model(
     n_layers = ckpt.get("n_layers", 4)
     modes = ckpt.get("modes", 16)
 
-    if model_type == "fno":
-        model = FNO(
-            in_channels=1,
-            out_channels=1,
-            hidden_channels=hidden,
-            n_layers=n_layers,
-            modes=modes,
-            dim=2,
-        )
-    elif model_type == "constrained":
-        model = ConstrainedFNO(
-            in_channels=1,
-            out_channels=1,
-            hidden_channels=hidden,
-            n_layers=n_layers,
-            modes=modes,
-            constraint="conservative",
-        )
-    elif model_type == "residual":
+    coarse_solver = None
+    if model_type == "residual":
         coarse_solver = make_coarse_solver(Q_mean, Q_std, T_mean, T_std, coarse_factor=4)
-        model = NeuralResidualCorrector(
-            solver=coarse_solver,
-            in_channels=1,
-            out_channels=1,
-            solver_out_channels=1,
-            hidden_channels=hidden,
-            n_layers=n_layers,
-            modes=modes,
-            solver_detach=True,
-        )
-    else:
-        raise ValueError(f"Unknown model_type: {model_type!r}")
-
+    model = build_model(
+        model_type,
+        hidden,
+        n_layers,
+        modes,
+        coarse_solver=coarse_solver,
+        boundary_value=(T_AMBIENT - T_mean) / T_std,
+    )
     model.load_state_dict(ckpt["model_state_dict"])
     model.to(device).eval()
     return model
