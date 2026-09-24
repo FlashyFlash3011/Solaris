@@ -77,6 +77,8 @@ def load_model(checkpoint_dir: str, device: torch.device):
     model.eval()
 
     stats = dict(np.load(stats_path))
+    for key, default in (("H", 64), ("W", 64), ("n_hours", 24), ("n_snapshots", 25)):
+        stats[key] = int(ckpt.get(key, default))
     return model, stats
 
 
@@ -121,47 +123,33 @@ def surrogate_rollout(
     """
     n_snap = len(result_solver["times_h"])
 
-    # Denorm helpers
-    fi_mean = torch.as_tensor(stats["fi_mean"], dtype=torch.float32).to(device)
-    fi_std = torch.as_tensor(stats["fi_std"], dtype=torch.float32).to(device)
-    ft_mean = torch.as_tensor(stats["ft_mean"], dtype=torch.float32).to(device)
-    ft_std = torch.as_tensor(stats["ft_std"], dtype=torch.float32).to(device)
-    wi_mean = torch.as_tensor(stats["wi_mean"], dtype=torch.float32).to(device)
-    wi_std = torch.as_tensor(stats["wi_std"], dtype=torch.float32).to(device)
-    wt_mean = torch.as_tensor(stats["wt_mean"], dtype=torch.float32).to(device)
-    wt_std = torch.as_tensor(stats["wt_std"], dtype=torch.float32).to(device)
+    def as_t(key):
+        return torch.as_tensor(stats[key], dtype=torch.float32).to(device)
+
+    fi_mean, fi_std = as_t("fi_mean"), as_t("fi_std")
+    wi_mean, wi_std = as_t("wi_mean"), as_t("wi_std")
+    wt_mean, wt_std = as_t("wt_mean"), as_t("wt_std")
+    h_scale = float(stats["h_scale"])
+    land = (bathy >= 0.0).astype(np.float32)
 
     def norm_flood_in(h_arr, bathy_arr, wu_arr, wv_arr, t_norm_val):
-        """Build and normalise a (1,5,H,W) flood input tensor."""
-        h_log = np.log1p(np.maximum(h_arr, 0.0))
-        fi = np.stack(
-            [
-                h_log[None],
-                bathy_arr[None],
-                wu_arr[None],
-                wv_arr[None],
-                np.full((1, H, W), t_norm_val),
-            ],
-            axis=1,
-        ).astype(np.float32)
-        fi_t = torch.as_tensor(fi).to(device)
-        return (fi_t - fi_mean) / fi_std
+        """Build and normalise a (1, 6, H, W) flood input tensor."""
+        fi = np.stack([h_arr, bathy_arr, wu_arr, wv_arr, np.full((H, W), t_norm_val), land])[
+            None
+        ].astype(np.float32)
+        return (torch.as_tensor(fi).to(device) - fi_mean) / fi_std
 
     def norm_wind_in(wu_arr, wv_arr, t_norm_val):
-        wi = np.stack([wu_arr[None], wv_arr[None], np.full((1, H, W), t_norm_val)], axis=1).astype(
-            np.float32
-        )
-        wi_t = torch.as_tensor(wi).to(device)
-        return (wi_t - wi_mean) / wi_std
+        wi = np.stack([wu_arr, wv_arr, np.full((H, W), t_norm_val)])[None].astype(np.float32)
+        return (torch.as_tensor(wi).to(device) - wi_mean) / wi_std
 
     def denorm_flood(ft_norm):
-        """Denormalise and invert log1p. Returns numpy (H,W)."""
-        ft_phys = ft_norm * ft_std + ft_mean
-        return np.expm1(np.maximum(ft_phys.cpu().numpy()[0, 0], 0.0))
+        """Flood depth in metres, numpy (H, W). Depth is only scaled, never shifted."""
+        return ft_norm.cpu().numpy()[0, 0] * h_scale
 
     def denorm_wind(wt_norm):
-        wt_phys = wt_norm * wt_std + wt_mean
-        return wt_phys.cpu().numpy()[0, 0], wt_phys.cpu().numpy()[0, 1]
+        wt_phys = (wt_norm * wt_std + wt_mean).cpu().numpy()[0]
+        return wt_phys[0], wt_phys[1]
 
     # Initialise with solver's t=0 state
     h_cur = result_solver["flood"][0]
@@ -189,12 +177,14 @@ def surrogate_rollout(
             if predictor is not None:
                 combined = torch.cat([fi, wi], dim=1)  # (1, 8, H, W)
                 lower_n, upper_n, _ = predictor.predict(combined)
-                lower = denorm_flood(lower_n)
+                # True depth is never negative, so clipping the lower bound at 0
+                # keeps the coverage guarantee and gives a tighter interval.
+                lower = np.maximum(denorm_flood(lower_n), 0.0)
                 upper = denorm_flood(upper_n)
             else:
                 lower = upper = None
 
-            flood_pred.append(np.maximum(h_next, 0.0))
+            flood_pred.append(h_next)  # >= 0 and 0 on ocean by construction
             flood_lower.append(lower)
             flood_upper.append(upper)
 
@@ -228,18 +218,20 @@ def run_comparison(args) -> None:
     model, stats = load_model(args.checkpoint_dir, device)
     predictor = None if args.no_conformal else load_conformal(args.checkpoint_dir, model, device)
 
-    H, W = 64, 64
+    H, W = stats["H"], stats["W"]  # the grid the model was trained on
     rng = np.random.default_rng(args.seed)
 
     results_to_plot, speedups, l2s = [], [], []
 
     for i in range(args.n):
         bathy = random_coastal_bathymetry(H, W, rng=rng)
-        track = random_hurricane_track(H, W, n_hours=24, rng=rng)
+        track = random_hurricane_track(H, W, n_hours=stats["n_hours"], rng=rng)
 
         # ── Solver ──
         t0 = time.perf_counter()
-        result_solver = run_hurricane_simulation(bathy, track, n_hours=24, n_snapshots=25)
+        result_solver = run_hurricane_simulation(
+            bathy, track, n_hours=stats["n_hours"], n_snapshots=stats["n_snapshots"]
+        )
         t_solver = time.perf_counter() - t0
 
         # ── Surrogate ──
