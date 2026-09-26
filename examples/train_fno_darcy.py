@@ -73,6 +73,7 @@ def main():
         n_layers=args.n_layers,
         modes=args.modes,
         dim=2,
+        norm=None,
     )
     model = model.to(device)
     log.info(f"Model: {model.meta.name} | Parameters: {model.num_parameters():,}")

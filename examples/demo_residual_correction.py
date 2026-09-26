@@ -128,6 +128,7 @@ def run(args):
         n_layers=args.n_layers,
         modes=args.modes,
         dim=2,
+        norm=None,
     ).to(device)
 
     # ── Model B: NeuralResidualCorrector ──
@@ -139,6 +140,7 @@ def run(args):
         hidden_channels=args.hidden,
         n_layers=args.n_layers,
         modes=args.modes,
+        norm=None,
     ).to(device)
 
     log.info(f"Pure FNO params:       {fno.num_parameters():,}")

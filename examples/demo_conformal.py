@@ -70,9 +70,9 @@ def run(args):
     train_dl = DataLoader(TensorDataset(train_K, train_P), batch_size=16, shuffle=True)
 
     # ── Step 1: train a standard FNO ──
-    fno = FNO(in_channels=1, out_channels=1, hidden_channels=32, n_layers=4, modes=12, dim=2).to(
-        device
-    )
+    fno = FNO(
+        in_channels=1, out_channels=1, hidden_channels=32, n_layers=4, modes=12, dim=2, norm=None
+    ).to(device)
     log.info(f"FNO parameters: {fno.num_parameters():,}")
     log.info("Training FNO …")
     opt = torch.optim.AdamW(fno.parameters(), lr=1e-3, weight_decay=1e-4)

@@ -102,10 +102,22 @@ def run(args):
 
     # ── Model A: two independent FNOs ──
     fno_T = FNO(
-        in_channels=1, out_channels=1, hidden_channels=hidden, n_layers=layers, modes=modes, dim=2
+        in_channels=1,
+        out_channels=1,
+        hidden_channels=hidden,
+        n_layers=layers,
+        modes=modes,
+        dim=2,
+        norm=None,
     ).to(device)
     fno_Psi = FNO(
-        in_channels=1, out_channels=1, hidden_channels=hidden, n_layers=layers, modes=modes, dim=2
+        in_channels=1,
+        out_channels=1,
+        hidden_channels=hidden,
+        n_layers=layers,
+        modes=modes,
+        dim=2,
+        norm=None,
     ).to(device)
 
     # ── Model B: CoupledOperator with learned coupling ──
@@ -118,6 +130,7 @@ def run(args):
                 n_layers=layers,
                 modes=modes,
                 dim=2,
+                norm=None,
             ),
             "flow": FNO(
                 in_channels=1,
@@ -126,6 +139,7 @@ def run(args):
                 n_layers=layers,
                 modes=modes,
                 dim=2,
+                norm=None,
             ),
         },
         coupling_channels={"thermal": 1, "flow": 1},

@@ -88,6 +88,7 @@ def train(args):
         n_layers=args.n_layers,
         n_scales=3,
         max_modes=args.modes,
+        norm=None,
     ).to(device)
 
     # ── Baseline FNO ──
@@ -98,6 +99,7 @@ def train(args):
         n_layers=args.n_layers,
         modes=args.modes,
         dim=2,
+        norm=None,
     ).to(device)
 
     log.info(f"MultiScaleFNO params: {ms_model.num_parameters():,}")
