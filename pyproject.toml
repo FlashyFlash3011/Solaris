@@ -92,3 +92,7 @@ select = ["E", "F", "I", "UP"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--cov=solaris --cov-report=term-missing"
+filterwarnings = [
+    # Older tests deliberately exercise the legacy norm default
+    "ignore:.*norm was not specified:solaris.exceptions.FutureFeatureWarning",
+]
