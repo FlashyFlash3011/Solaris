@@ -51,6 +51,7 @@ def compare(args):
         n_layers=ckpt.get("n_layers", 4),
         modes=ckpt.get("modes", 16),
         dim=2,
+        norm=ckpt.get("norm", "instance"),  # pre-norm-option checkpoints
     )
     model.load_state_dict(ckpt["model_state_dict"])
     model = model.to(device).eval()
