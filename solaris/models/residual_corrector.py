@@ -30,6 +30,7 @@ import torch.nn as nn
 from solaris.core.meta import ModelMetaData
 from solaris.core.module import Module
 from solaris.models.fno import FNOBlock2d
+from solaris.nn.norm import UNSET, resolve_norm
 
 
 class NeuralResidualCorrector(Module):
@@ -61,6 +62,8 @@ class NeuralResidualCorrector(Module):
     solver_detach : bool
         If ``True`` (default), stop gradients through the solver output.
         Set ``False`` only for differentiable solvers.
+    norm : None or "instance"
+        Normalisation inside the Fourier blocks; see :class:`~solaris.models.FNO`.
     """
 
     _meta = ModelMetaData(
@@ -79,8 +82,10 @@ class NeuralResidualCorrector(Module):
         n_layers: int = 4,
         modes: int = 12,
         solver_detach: bool = True,
+        norm: str | None = UNSET,
     ) -> None:
         super().__init__(meta=self._meta)
+        norm = resolve_norm(norm, "NeuralResidualCorrector")
         self.solver = solver
         self.solver_detach = solver_detach
         self.out_channels = out_channels
@@ -89,7 +94,7 @@ class NeuralResidualCorrector(Module):
         backbone_in = in_channels + solver_out_channels
         self.lift = nn.Conv2d(backbone_in, hidden_channels, 1)
         self.blocks = nn.ModuleList(
-            [FNOBlock2d(hidden_channels, modes, modes) for _ in range(n_layers)]
+            [FNOBlock2d(hidden_channels, modes, modes, norm) for _ in range(n_layers)]
         )
         self.proj = nn.Sequential(
             nn.Conv2d(hidden_channels, hidden_channels * 4, 1),
@@ -107,6 +112,7 @@ class NeuralResidualCorrector(Module):
             n_layers=n_layers,
             modes=modes,
             solver_detach=solver_detach,
+            norm=norm,
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

@@ -11,6 +11,7 @@ import torch.nn.functional as F
 
 from solaris.core.meta import ModelMetaData
 from solaris.core.module import Module
+from solaris.nn.norm import UNSET, make_norm, resolve_norm
 
 
 class WaveletConv2d(nn.Module):
@@ -121,6 +122,8 @@ class WNO(Module):
         Minimum zero-padding added (bottom/right) before the WNO blocks and
         removed afterwards.  It is automatically increased so the padded size
         is a multiple of ``2**levels``, so any input size works.
+    norm : None or "instance"
+        Normalisation inside the wavelet blocks; see :class:`~solaris.models.FNO`.
     """
 
     _meta = ModelMetaData(
@@ -137,8 +140,10 @@ class WNO(Module):
         n_layers: int = 4,
         levels: int = 2,
         padding: int = 8,
+        norm: str | None = UNSET,
     ) -> None:
         super().__init__(meta=self._meta)
+        norm = resolve_norm(norm, "WNO")
         self.padding = padding
         self.levels = levels
         self.lift = nn.Conv2d(in_channels, hidden_channels, 1)
@@ -146,7 +151,7 @@ class WNO(Module):
             [
                 nn.Sequential(
                     WaveletConv2d(hidden_channels, hidden_channels, levels=levels),
-                    nn.InstanceNorm2d(hidden_channels),
+                    make_norm(norm, hidden_channels, 2),
                     nn.GELU(),
                 )
                 for _ in range(n_layers)
@@ -164,6 +169,7 @@ class WNO(Module):
             n_layers=n_layers,
             levels=levels,
             padding=padding,
+            norm=norm,
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

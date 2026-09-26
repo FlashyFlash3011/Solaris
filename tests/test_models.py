@@ -498,3 +498,77 @@ def test_conformal_coverage_is_valid_on_average():
     mean = sum(coverages) / len(coverages)
     # theory: E[coverage] = ceil(51*0.9)/51 = 0.902; 400 draws give s.e. ~0.002
     assert 0.895 <= mean <= 0.915
+
+
+# --- Normalisation inside FNO blocks -------------------------------------------
+
+_NORM_FACTORIES = {
+    "FNO2d": lambda norm: FNO(1, 1, 8, 2, 4, dim=2, norm=norm),
+    "FNO1d": lambda norm: FNO(1, 1, 8, 2, 4, dim=1, norm=norm),
+    "FNO3d": lambda norm: FNO(1, 1, 8, 2, 4, dim=3, norm=norm),
+    "ConstrainedFNO": lambda norm: ConstrainedFNO(1, 1, 8, 2, 4, constraint="none", norm=norm),
+    "UNO": lambda norm: UNO(1, 1, 8, n_levels=2, modes=4, norm=norm),
+    "MultiScaleFNO": lambda norm: MultiScaleFNO(1, 1, 8, 2, max_modes=4, norm=norm),
+    "WNO": lambda norm: WNO(1, 1, 8, 2, levels=2, norm=norm),
+    "NeuralResidualCorrector": lambda norm: NeuralResidualCorrector(
+        lambda x: x, 1, 1, hidden_channels=8, n_layers=2, modes=4, norm=norm
+    ),
+}
+_SHAPES = {"FNO1d": (2, 1, 32), "FNO3d": (2, 1, 8, 8, 8)}
+
+
+@pytest.mark.parametrize("name", list(_NORM_FACTORIES))
+def test_instance_norm_discards_input_offset(name):
+    """Documents why norm=None exists: instance-normalised blocks cannot see a
+    per-sample constant offset of the input, so e.g. y = x + c is unlearnable."""
+    torch.manual_seed(0)
+    x = torch.randn(*_SHAPES.get(name, (2, 1, 16, 16)))
+    shift = 3.0
+    with_norm = _NORM_FACTORIES[name]("instance").eval()
+    without = _NORM_FACTORIES[name](None).eval()
+    assert not torch.allclose(without(x + shift), without(x), atol=1e-3)
+    # Plain stacks of Fourier blocks are exactly blind to the offset with
+    # instance norm. (MultiScaleFNO's residual path, WNO's zero padding and the
+    # corrector's solver path leak part of it back in.)
+    if name in ("FNO1d", "FNO2d", "FNO3d", "ConstrainedFNO", "UNO"):
+        torch.testing.assert_close(with_norm(x + shift), with_norm(x), atol=1e-3, rtol=1e-3)
+
+
+@pytest.mark.parametrize("name", list(_NORM_FACTORIES))
+def test_norm_none_has_no_normalisation_layers(name):
+    model = _NORM_FACTORIES[name](None)
+    assert not any(
+        isinstance(m, torch.nn.modules.instancenorm._InstanceNorm) for m in model.modules()
+    )
+
+
+def test_unspecified_norm_warns_and_keeps_legacy_behaviour():
+    from solaris.exceptions import FutureFeatureWarning
+
+    with pytest.warns(FutureFeatureWarning, match="norm"):
+        model = FNO(1, 1, 8, 1, 4)
+    assert model._init_args["norm"] == "instance"
+
+
+def test_explicit_norm_does_not_warn():
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        FNO(1, 1, 8, 1, 4, norm=None)
+        FNO(1, 1, 8, 1, 4, norm="instance")
+
+
+def test_norm_survives_checkpoint_roundtrip(tmp_path):
+    from solaris.core import Module
+
+    model = FNO(1, 1, 8, 1, 4, norm=None)
+    model.save(tmp_path / "m.pt")
+    loaded = Module.from_checkpoint(tmp_path / "m.pt", map_location="cpu")
+    assert loaded._init_args["norm"] is None
+    assert not any(isinstance(m, torch.nn.InstanceNorm2d) for m in loaded.modules())
+
+
+def test_invalid_norm_rejected():
+    with pytest.raises(ValueError):
+        FNO(1, 1, 8, 1, 4, norm="batch")

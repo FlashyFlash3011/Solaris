@@ -9,15 +9,16 @@ from torch.utils.checkpoint import checkpoint as grad_checkpoint
 
 from solaris.core.meta import ModelMetaData
 from solaris.core.module import Module
+from solaris.nn.norm import UNSET, make_norm, resolve_norm
 from solaris.nn.spectral import SpectralConv1d, SpectralConv2d, SpectralConv3d
 
 
 class FNOBlock1d(nn.Module):
-    def __init__(self, channels: int, modes: int) -> None:
+    def __init__(self, channels: int, modes: int, norm: str | None = "instance") -> None:
         super().__init__()
         self.spectral = SpectralConv1d(channels, channels, modes)
         self.bypass = nn.Conv1d(channels, channels, 1)
-        self.norm = nn.InstanceNorm1d(channels)
+        self.norm = make_norm(norm, channels, 1)
         self.act = nn.GELU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -25,11 +26,13 @@ class FNOBlock1d(nn.Module):
 
 
 class FNOBlock2d(nn.Module):
-    def __init__(self, channels: int, modes_x: int, modes_y: int) -> None:
+    def __init__(
+        self, channels: int, modes_x: int, modes_y: int, norm: str | None = "instance"
+    ) -> None:
         super().__init__()
         self.spectral = SpectralConv2d(channels, channels, modes_x, modes_y)
         self.bypass = nn.Conv2d(channels, channels, 1)
-        self.norm = nn.InstanceNorm2d(channels)
+        self.norm = make_norm(norm, channels, 2)
         self.act = nn.GELU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -37,11 +40,18 @@ class FNOBlock2d(nn.Module):
 
 
 class FNOBlock3d(nn.Module):
-    def __init__(self, channels: int, modes_x: int, modes_y: int, modes_z: int) -> None:
+    def __init__(
+        self,
+        channels: int,
+        modes_x: int,
+        modes_y: int,
+        modes_z: int,
+        norm: str | None = "instance",
+    ) -> None:
         super().__init__()
         self.spectral = SpectralConv3d(channels, channels, modes_x, modes_y, modes_z)
         self.bypass = nn.Conv3d(channels, channels, 1)
-        self.norm = nn.InstanceNorm3d(channels)
+        self.norm = make_norm(norm, channels, 3)
         self.act = nn.GELU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -65,6 +75,15 @@ class FNO(Module):
         Fourier modes per spatial dimension. A single int is broadcast.
     dim : int
         Spatial dimensionality: 1, 2, or 3.
+    gradient_checkpointing : bool
+        Recompute block activations in the backward pass to save memory.
+    compile, compile_mode :
+        Wrap ``forward`` with ``torch.compile`` at construction.
+    norm : None or "instance"
+        Normalisation inside each Fourier block.  ``None`` (recommended) is the
+        reference FNO; ``"instance"`` is the legacy Solaris behaviour, which
+        hides each sample's mean and scale from the network.  If omitted,
+        ``"instance"`` is used with a ``FutureFeatureWarning``.
     """
 
     _meta = ModelMetaData(
@@ -84,8 +103,10 @@ class FNO(Module):
         gradient_checkpointing: bool = False,
         compile: bool = False,
         compile_mode: str = "reduce-overhead",
+        norm: str | None = UNSET,
     ) -> None:
         super().__init__(meta=self._meta)
+        norm = resolve_norm(norm, "FNO")
         assert dim in (1, 2, 3), "dim must be 1, 2, or 3"
         if isinstance(modes, int):
             modes = [modes] * dim
@@ -102,15 +123,18 @@ class FNO(Module):
         )
         if dim == 1:
             self.blocks = nn.ModuleList(
-                [FNOBlock1d(hidden_channels, modes[0]) for _ in range(n_layers)]
+                [FNOBlock1d(hidden_channels, modes[0], norm) for _ in range(n_layers)]
             )
         elif dim == 2:
             self.blocks = nn.ModuleList(
-                [FNOBlock2d(hidden_channels, modes[0], modes[1]) for _ in range(n_layers)]
+                [FNOBlock2d(hidden_channels, modes[0], modes[1], norm) for _ in range(n_layers)]
             )
         else:
             self.blocks = nn.ModuleList(
-                [FNOBlock3d(hidden_channels, modes[0], modes[1], modes[2]) for _ in range(n_layers)]
+                [
+                    FNOBlock3d(hidden_channels, modes[0], modes[1], modes[2], norm)
+                    for _ in range(n_layers)
+                ]
             )
         conv_cls = {1: nn.Conv1d, 2: nn.Conv2d, 3: nn.Conv3d}[dim]
         self.proj = nn.Sequential(
@@ -126,6 +150,7 @@ class FNO(Module):
             modes=modes,
             dim=dim,
             gradient_checkpointing=gradient_checkpointing,
+            norm=norm,
         )
         if compile:
             self.compile_model(mode=compile_mode)

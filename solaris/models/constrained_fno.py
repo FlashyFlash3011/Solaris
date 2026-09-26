@@ -47,6 +47,7 @@ from solaris.nn.constraints import (
     ConservationProjection,
     DivergenceFreeProjection2d,
 )
+from solaris.nn.norm import UNSET, resolve_norm
 
 CONSTRAINTS = ("divergence_free", "conservative", "dirichlet", "nonnegative", "none")
 
@@ -71,6 +72,8 @@ class ConstrainedFNO(Module):
         ``"additive"`` (default) or ``"multiplicative"``; only accepted with
         ``constraint="conservative"``.  See
         :class:`~solaris.nn.ConservationProjection`.
+    norm : None or "instance"
+        Normalisation inside the Fourier blocks; see :class:`~solaris.models.FNO`.
     """
 
     _meta = ModelMetaData(
@@ -89,8 +92,10 @@ class ConstrainedFNO(Module):
         constraint: str = "divergence_free",
         boundary_value: float | None = None,
         conservation_mode: str | None = None,
+        norm: str | None = UNSET,
     ) -> None:
         super().__init__(meta=self._meta)
+        norm = resolve_norm(norm, "ConstrainedFNO")
         if constraint not in CONSTRAINTS:
             raise ValueError(f"Unknown constraint: {constraint!r}; expected one of {CONSTRAINTS}")
         if boundary_value is not None and constraint != "dirichlet":
@@ -105,7 +110,7 @@ class ConstrainedFNO(Module):
         # FNO backbone (2-D only)
         self.lift = nn.Conv2d(in_channels, hidden_channels, 1)
         self.blocks = nn.ModuleList(
-            [FNOBlock2d(hidden_channels, modes[0], modes[1]) for _ in range(n_layers)]
+            [FNOBlock2d(hidden_channels, modes[0], modes[1], norm) for _ in range(n_layers)]
         )
         self.proj = nn.Sequential(
             nn.Conv2d(hidden_channels, hidden_channels * 4, 1),
@@ -140,6 +145,7 @@ class ConstrainedFNO(Module):
             constraint=constraint,
             boundary_value=boundary_value,
             conservation_mode=conservation_mode,
+            norm=norm,
         )
 
     def apply_constraint(self, x: torch.Tensor, out: torch.Tensor) -> torch.Tensor:

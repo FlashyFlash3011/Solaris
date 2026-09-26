@@ -31,6 +31,7 @@ import torch.nn as nn
 
 from solaris.core.meta import ModelMetaData
 from solaris.core.module import Module
+from solaris.nn.norm import UNSET, make_norm, resolve_norm
 
 
 class BandSpectralConv2d(nn.Module):
@@ -180,6 +181,7 @@ class MultiScaleFNOBlock(nn.Module):
         n_scales: int,
         band_edges: list[float],
         max_modes: int,
+        norm: str | None = "instance",
     ) -> None:
         super().__init__()
         self.n_scales = n_scales
@@ -192,7 +194,7 @@ class MultiScaleFNOBlock(nn.Module):
         )
         self.bypasses = nn.ModuleList([nn.Conv2d(channels, channels, 1) for _ in range(n_scales)])
         self.cross_attn = CrossScaleAttention(channels, n_scales)
-        self.norms = nn.ModuleList([nn.InstanceNorm2d(channels) for _ in range(n_scales)])
+        self.norms = nn.ModuleList([make_norm(norm, channels, 2) for _ in range(n_scales)])
         self.act = nn.GELU()
         self.aggregate = nn.Conv2d(channels * n_scales, channels, 1)
 
@@ -226,6 +228,8 @@ class MultiScaleFNO(Module):
         Fourier modes kept per axis.  The retained block is split into
         ``n_scales`` rings of equal width in mode-index radius, so each band
         covers the same physical scales at every resolution.
+    norm : None or "instance"
+        Normalisation inside the blocks; see :class:`~solaris.models.FNO`.
     """
 
     _meta = ModelMetaData(
@@ -242,8 +246,10 @@ class MultiScaleFNO(Module):
         n_layers: int = 4,
         n_scales: int = 3,
         max_modes: int = 16,
+        norm: str | None = UNSET,
     ) -> None:
         super().__init__(meta=self._meta)
+        norm = resolve_norm(norm, "MultiScaleFNO")
         self.n_scales = n_scales
 
         # Equal-width rings in mode-index radius over [0, max_modes); the last
@@ -254,7 +260,7 @@ class MultiScaleFNO(Module):
         self.lift = nn.Conv2d(in_channels, hidden_channels, 1)
         self.blocks = nn.ModuleList(
             [
-                MultiScaleFNOBlock(hidden_channels, n_scales, edges, max_modes)
+                MultiScaleFNOBlock(hidden_channels, n_scales, edges, max_modes, norm)
                 for _ in range(n_layers)
             ]
         )
@@ -271,6 +277,7 @@ class MultiScaleFNO(Module):
             n_layers=n_layers,
             n_scales=n_scales,
             max_modes=max_modes,
+            norm=norm,
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

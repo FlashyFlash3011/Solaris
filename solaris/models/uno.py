@@ -10,6 +10,7 @@ import torch.nn.functional as F
 from solaris.core.meta import ModelMetaData
 from solaris.core.module import Module
 from solaris.models.fno import FNOBlock2d
+from solaris.nn.norm import UNSET, resolve_norm
 
 
 class UNO(Module):
@@ -31,6 +32,8 @@ class UNO(Module):
         Fourier modes used in every FNOBlock2d.
     channel_multiplier : int
         Channel width multiplied by this factor at each encoder level.
+    norm : None or "instance"
+        Normalisation inside the Fourier blocks; see :class:`~solaris.models.FNO`.
     """
 
     _meta = ModelMetaData(
@@ -47,8 +50,10 @@ class UNO(Module):
         n_levels: int = 3,
         modes: int = 12,
         channel_multiplier: int = 2,
+        norm: str | None = UNSET,
     ) -> None:
         super().__init__(meta=self._meta)
+        norm = resolve_norm(norm, "UNO")
 
         # Channel widths per encoder level
         widths: list[int] = [hidden_channels * (channel_multiplier**i) for i in range(n_levels)]
@@ -57,7 +62,7 @@ class UNO(Module):
 
         # Encoder: FNO block at each level + strided conv to downsample & expand channels
         self.encoder_blocks = nn.ModuleList(
-            [FNOBlock2d(widths[i], modes, modes) for i in range(n_levels)]
+            [FNOBlock2d(widths[i], modes, modes, norm) for i in range(n_levels)]
         )
         self.downsample = nn.ModuleList(
             [
@@ -74,7 +79,7 @@ class UNO(Module):
         self.bottleneck = nn.Sequential(
             nn.Conv2d(widths[-1], bottleneck_w, 1),
             nn.GELU(),
-            FNOBlock2d(bottleneck_w, modes, modes),
+            FNOBlock2d(bottleneck_w, modes, modes, norm),
             nn.Conv2d(bottleneck_w, widths[-1], 1),
         )
 
@@ -88,7 +93,7 @@ class UNO(Module):
             # Skip from encoder also has widths[i] channels → cat = widths[i]*2.
             # First decoder step (from bottleneck): bottleneck already outputs widths[-1].
             self.skip_convs.append(nn.Conv2d(widths[i] * 2, widths[i], 1))
-            self.decoder_blocks.append(FNOBlock2d(widths[i], modes, modes))
+            self.decoder_blocks.append(FNOBlock2d(widths[i], modes, modes, norm))
             if i > 0:
                 # upsample + compress channels back to widths[i-1]
                 self.upsample.append(
@@ -113,6 +118,7 @@ class UNO(Module):
             n_levels=n_levels,
             modes=modes,
             channel_multiplier=channel_multiplier,
+            norm=norm,
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
