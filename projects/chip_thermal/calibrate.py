@@ -68,6 +68,7 @@ def load_model(
         modes,
         coarse_solver=coarse_solver,
         boundary_value=(T_AMBIENT - T_mean) / T_std,
+        norm=ckpt.get("norm", "instance"),  # pre-norm-option checkpoints
     )
     model.load_state_dict(ckpt["model_state_dict"])
     model.to(device).eval()

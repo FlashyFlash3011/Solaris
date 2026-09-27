@@ -49,6 +49,7 @@ def load_model(ckpt_path: str, device: torch.device):
         n_layers=n_layers,
         modes=modes,
         dim=2,
+        norm=ckpt.get("norm", "instance"),
     ).to(device)
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()

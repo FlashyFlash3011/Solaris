@@ -159,6 +159,7 @@ def build_model(
     grad_ckpt: bool = False,
     coarse_solver=None,
     boundary_value: float | None = None,
+    norm: str | None = None,
 ):
     """Instantiate the requested model variant.
 
@@ -175,6 +176,7 @@ def build_model(
             modes=modes,
             dim=2,
             gradient_checkpointing=grad_ckpt,
+            norm=norm,
         )
     elif model_type == "constrained":
         return ConstrainedFNO(
@@ -185,6 +187,7 @@ def build_model(
             modes=modes,
             constraint="dirichlet",
             boundary_value=boundary_value,
+            norm=norm,
         )
     elif model_type == "residual":
         assert coarse_solver is not None, "coarse_solver required for residual model"
@@ -197,6 +200,7 @@ def build_model(
             n_layers=n_layers,
             modes=modes,
             solver_detach=True,
+            norm=norm,
         )
     else:
         raise ValueError(f"Unknown model type: {model_type!r}")
@@ -314,6 +318,7 @@ def train_one_run(
                     "modes": args.modes,
                     "resolution": args.resolution,
                     "model_type": model_type,
+                    "norm": args.norm,
                 },
             )
 
@@ -364,6 +369,7 @@ def mode_sweep(args, train_loader, val_loader, device, tolerance: float = 0.02) 
             n_layers=args.n_layers,
             modes=modes,
             dim=2,
+            norm=args.norm,
         ).to(device)
         opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
         for _ in range(5):
@@ -502,6 +508,7 @@ def train(args):
         args.grad_ckpt,
         coarse_solver,
         boundary_value=(T_AMBIENT - T_mean) / T_std,
+        norm=args.norm,
     ).to(device)
     log.info(f"Model: {args.model}  |  parameters: {model.num_parameters():,}")
 
@@ -559,6 +566,7 @@ def _run_tuning(args, to_loader, arrays, device, ckpt_dir, Q_mean, Q_std, T_mean
             False,
             coarse_solver,
             boundary_value=(T_AMBIENT - T_mean) / T_std,
+            norm=args.norm,
         ).to(device)
         return train_one_run(
             model,
@@ -594,6 +602,12 @@ if __name__ == "__main__":
     p.add_argument("--hidden", type=int, default=64)
     p.add_argument("--modes", type=int, default=16)
     p.add_argument("--n_layers", type=int, default=4)
+    p.add_argument(
+        "--norm",
+        default="none",
+        choices=["none", "instance"],
+        help="Normalisation inside Fourier blocks (none = reference FNO)",
+    )
     p.add_argument("--checkpoint_dir", default=str(Path(__file__).parent / "checkpoints"))
     p.add_argument(
         "--model",
@@ -627,4 +641,6 @@ if __name__ == "__main__":
         action="store_true",
         help="Short trainings at several mode counts; use the smallest within 2%% of the best",
     )
-    train(p.parse_args())
+    args = p.parse_args()
+    args.norm = None if args.norm == "none" else args.norm
+    train(args)
