@@ -151,6 +151,7 @@ def train(args):
         n_layers=args.n_layers,
         modes=args.modes,
         dim=2,
+        norm=args.norm,
     ).to(device)
     log.info(f"FNO params: {model.num_parameters():,}")
 
@@ -198,7 +199,12 @@ def train(args):
                 sched,
                 epoch,
                 vl,
-                extra={"hidden": args.hidden, "n_layers": args.n_layers, "modes": args.modes},
+                extra={
+                    "hidden": args.hidden,
+                    "n_layers": args.n_layers,
+                    "modes": args.modes,
+                    "norm": args.norm,
+                },
             )
 
     log.info(f"Done. Best val={best:.4e}  →  {args.checkpoint_dir}/best_fno.pt")
@@ -217,6 +223,14 @@ if __name__ == "__main__":
     p.add_argument("--hidden", type=int, default=64)
     p.add_argument("--modes", type=int, default=16)
     p.add_argument("--n_layers", type=int, default=4)
+    p.add_argument(
+        "--norm",
+        default="none",
+        choices=["none", "instance"],
+        help="Normalisation inside Fourier blocks (none = reference FNO)",
+    )
     p.add_argument("--cache", default="data/water_heat_dataset.npz")
     p.add_argument("--checkpoint_dir", default="checkpoints")
-    train(p.parse_args())
+    args = p.parse_args()
+    args.norm = None if args.norm == "none" else args.norm
+    train(args)
