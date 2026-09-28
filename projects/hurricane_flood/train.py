@@ -80,7 +80,9 @@ class FloodOperator(nn.Module):
     coupling.
     """
 
-    def __init__(self, hidden_channels: int, n_layers: int, modes: int) -> None:
+    def __init__(
+        self, hidden_channels: int, n_layers: int, modes: int, norm: str | None = None
+    ) -> None:
         super().__init__()
         self.fno = ConstrainedFNO(
             in_channels=N_FLOOD_IN,
@@ -89,6 +91,7 @@ class FloodOperator(nn.Module):
             n_layers=n_layers,
             modes=modes,
             constraint="nonnegative",
+            norm=norm,
         )
 
     @staticmethod
@@ -282,7 +285,8 @@ def split_storms(sim: np.ndarray, seed: int = 0) -> dict[str, np.ndarray]:
 
 
 def build_model(args) -> CoupledOperator:
-    flood_op = FloodOperator(args.hidden_flood, args.n_layers, args.modes)
+    norm = getattr(args, "norm", "instance")  # checkpoints without "norm" predate the option
+    flood_op = FloodOperator(args.hidden_flood, args.n_layers, args.modes, norm)
     wind_op = FNO(
         in_channels=N_WIND_IN,
         out_channels=2,
@@ -290,6 +294,7 @@ def build_model(args) -> CoupledOperator:
         n_layers=args.n_layers,
         modes=args.modes,
         dim=2,
+        norm=norm,
     )
     return CoupledOperator(
         operators={"flood": flood_op, "wind": wind_op},
@@ -420,6 +425,7 @@ def train(args) -> None:
                     "hidden_wind": args.hidden_wind,
                     "n_layers": args.n_layers,
                     "modes": args.modes,
+                    "norm": args.norm,
                 },
             )
 
@@ -471,9 +477,17 @@ if __name__ == "__main__":
     p.add_argument("--hidden_flood", type=int, default=64)
     p.add_argument("--hidden_wind", type=int, default=48)
     p.add_argument("--n_layers", type=int, default=4)
+    p.add_argument(
+        "--norm",
+        default="none",
+        choices=["none", "instance"],
+        help="Normalisation inside Fourier blocks (none = reference FNO)",
+    )
     p.add_argument("--modes", type=int, default=16)
     p.add_argument("--alpha_wind", type=float, default=0.5)
     p.add_argument("--conformal_alpha", type=float, default=0.1)
     p.add_argument("--cache", default="data/hurricane_dataset.npz")
     p.add_argument("--checkpoint_dir", default="checkpoints")
-    train(p.parse_args())
+    args = p.parse_args()
+    args.norm = None if args.norm == "none" else args.norm
+    train(args)

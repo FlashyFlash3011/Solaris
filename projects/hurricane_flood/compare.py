@@ -70,6 +70,7 @@ def load_model(checkpoint_dir: str, device: torch.device):
         hidden_wind = extra.get("hidden_wind", 48)
         n_layers = extra.get("n_layers", 4)
         modes = extra.get("modes", 16)
+        norm = extra.get("norm", "instance")  # pre-norm-option checkpoints
 
     model = build_model(_Args())
     model.load_state_dict(ckpt["model_state_dict"])
