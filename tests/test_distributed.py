@@ -83,3 +83,35 @@ def test_distributed_manager_repr_includes_groups():
     manager.initialize()
     r = repr(manager)
     assert "named_groups" in r
+
+
+def test_distributed_manager_device_type_cpu_forces_gloo():
+    DistributedManager.reset()
+    manager = DistributedManager()
+    manager.initialize(device_type="cpu")
+    assert manager.device == torch.device("cpu")
+    assert manager.backend == "gloo"
+    DistributedManager.reset()
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU")
+def test_distributed_manager_device_type_cuda():
+    DistributedManager.reset()
+    manager = DistributedManager()
+    manager.initialize(device_type="cuda")
+    assert manager.device.type == "cuda"
+    assert manager.backend == "nccl"
+    DistributedManager.reset()
+
+
+def test_distributed_manager_rejects_unknown_device_type():
+    DistributedManager.reset()
+    with pytest.raises(ValueError):
+        DistributedManager().initialize(device_type="tpu")
+    DistributedManager.reset()
+
+
+def test_distributed_manager_reset_gives_fresh_instance():
+    first = DistributedManager()
+    DistributedManager.reset()
+    assert DistributedManager() is not first

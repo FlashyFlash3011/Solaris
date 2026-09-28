@@ -45,36 +45,53 @@ class DistributedManager:
             cls._instance._mesh = None
         return cls._instance
 
-    def initialize(self) -> None:
+    def initialize(self, device_type: str | None = None) -> None:
         """Initialize the global process group.
 
-        Reads standard PyTorch environment variables:
+        Reads the standard ``torchrun`` environment variables:
         ``RANK``, ``WORLD_SIZE``, ``LOCAL_RANK``, ``MASTER_ADDR``, ``MASTER_PORT``.
 
-        On ROCm, ``"nccl"`` transparently uses RCCL.
-        Falls back to ``"gloo"`` when no GPU is available (CPU-only testing).
+        Parameters
+        ----------
+        device_type :
+            ``"cuda"`` (GPU — ROCm or CUDA — with the ``"nccl"`` backend, which
+            is RCCL on ROCm), ``"cpu"`` (``"gloo"`` backend), or ``None`` to use
+            the GPU when one is available.  Each process uses GPU
+            ``LOCAL_RANK``.
         """
         if self._initialized:
             return
+        if device_type not in (None, "cuda", "cpu"):
+            raise ValueError(f"device_type must be 'cuda', 'cpu' or None, got {device_type!r}")
+        if device_type is None:
+            device_type = "cuda" if torch.cuda.is_available() else "cpu"
+
         self._rank = int(os.environ.get("RANK", 0))
         self._world_size = int(os.environ.get("WORLD_SIZE", 1))
         self._local_rank = int(os.environ.get("LOCAL_RANK", 0))
 
-        if torch.cuda.is_available():
+        if device_type == "cuda":
             torch.cuda.set_device(self._local_rank)
             self._device = torch.device(f"cuda:{self._local_rank}")
-            backend = "nccl"  # Maps to RCCL on ROCm, NCCL on CUDA
+            self._backend = "nccl"  # RCCL on ROCm, NCCL on CUDA
         else:
             self._device = torch.device("cpu")
-            backend = "gloo"
+            self._backend = "gloo"
 
-        if self._world_size > 1:
+        if self._world_size > 1 and not dist.is_initialized():
             dist.init_process_group(
-                backend=backend,
+                backend=self._backend,
                 rank=self._rank,
                 world_size=self._world_size,
             )
         self._initialized = True
+
+    @classmethod
+    def reset(cls) -> None:
+        """Destroy the process group (if any) and forget the singleton instance."""
+        if dist.is_available() and dist.is_initialized():
+            dist.destroy_process_group()
+        cls._instance = None
 
     def initialize_mesh(
         self,
@@ -179,6 +196,11 @@ class DistributedManager:
     @property
     def device(self) -> torch.device:
         return self._device
+
+    @property
+    def backend(self) -> str:
+        """Collective backend in use: ``"nccl"`` (RCCL on ROCm) or ``"gloo"``."""
+        return self._backend
 
     @property
     def is_main(self) -> bool:
