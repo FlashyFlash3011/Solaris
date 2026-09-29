@@ -155,7 +155,10 @@ class WarmupCosineScheduler:
 
     def _apply(self, lr: float) -> None:
         for pg in self.optimizer.param_groups:
-            pg["lr"] = lr
+            if torch.is_tensor(pg["lr"]):
+                pg["lr"].fill_(lr)  # tensor LRs (e.g. under graph capture) update in place
+            else:
+                pg["lr"] = lr
 
     def step(self) -> float:
         """Advance one epoch and return the learning rate for the next epoch."""
@@ -167,7 +170,7 @@ class WarmupCosineScheduler:
     @property
     def last_lr(self) -> float:
         """Current learning rate."""
-        return self.optimizer.param_groups[0]["lr"]
+        return float(self.optimizer.param_groups[0]["lr"])
 
     def state_dict(self) -> dict[str, Any]:
         return {"epoch": self._epoch}
@@ -302,34 +305,47 @@ class CombinedOptimizer(torch.optim.Optimizer):
 
 
 class StaticCaptureTraining:
-    """Accelerate a training step via CUDA/HIP graph capture.
+    """Speed up a training step with CUDA/HIP graph capture.
 
-    After *warmup_steps* warm-up iterations, the training step is captured
-    into a CUDA graph and replayed on subsequent calls, eliminating CPU-side
-    kernel launch overhead.  This can give 2–5× throughput improvements for
-    models with many small kernels (e.g. FNO on large grids).
+    The first ``warmup_steps`` calls run normally (on a side stream, as graph
+    capture requires).  The next call records forward + backward + optimiser
+    step into a graph; every later call copies the new batch into static
+    input buffers and replays the graph, which removes the CPU cost of
+    launching each kernel.  The gain is largest for small models / batches
+    whose step time is dominated by kernel-launch overhead; measure it for
+    your workload (``benchmarks/static_capture.py``).
 
-    Falls back gracefully to a normal forward/backward/step when:
+    Works with the standard optimisers: Adam/AdamW (and other optimisers with
+    a ``capturable`` option) are switched to their graph-safe implementation,
+    which performs the same arithmetic with the step counter kept on the GPU.
 
-    * No CUDA/ROCm GPU is available.
-    * ``enabled=False``.
-    * Graph capture fails (e.g. non-static control flow or ops that prevent
-      capture — a warning is printed and training continues normally).
+    Falls back to ordinary eager steps when:
 
-    **CUDA graph requirements** (applies equally to ROCm HIP graphs):
+    * the batch is on the CPU, or ``enabled=False``;
+    * capture fails (e.g. data-dependent control flow) — a warning is issued.
 
-    * Input shapes must be *static* — the same ``(B, C, H, W)`` every call.
-    * No Python-side branching inside the captured step that varies per call.
-    * The model must be in ``train()`` mode throughout (mode switch breaks capture).
+    **Graph requirements** (CUDA and ROCm/HIP alike):
+
+    * Every batch must have the same shape, dtype and device.
+    * No Python-side branching that changes between steps.
+    * Keep the model in ``train()`` mode; call :meth:`reset` after changing
+      the learning rate schedule logic, model mode, or batch shape.
+
+    Learning-rate schedulers keep working after capture for optimisers with a
+    ``capturable`` option (Adam, AdamW, ...): their LR is moved into a device
+    tensor that the graph reads on every replay, and PyTorch schedulers and
+    :class:`WarmupCosineScheduler` update it in place.  Optimisers without
+    that option (e.g. SGD) have their LR fixed at capture time; call
+    :meth:`reset` after changing it.
 
     Parameters
     ----------
     model : nn.Module
     optimizer : torch.optim.Optimizer or CombinedOptimizer
     loss_fn : callable
-        ``loss_fn(pred, target) -> Tensor``.  Must be deterministic.
+        ``loss_fn(pred, target) -> Tensor``.
     warmup_steps : int
-        Number of normal steps before graph capture (default 20).
+        Number of eager steps before capture (default 20, minimum 1).
     enabled : bool
         Set ``False`` to disable graph capture entirely (useful for debugging).
 
@@ -340,7 +356,7 @@ class StaticCaptureTraining:
         capturer = StaticCaptureTraining(model, optimizer, loss_fn=F.mse_loss)
 
         for x, y in dataloader:
-            loss = capturer(x, y)
+            loss = capturer(x.cuda(), y.cuda())
     """
 
     def __init__(
@@ -354,54 +370,87 @@ class StaticCaptureTraining:
         self.model = model
         self.optimizer = optimizer
         self.loss_fn = loss_fn
-        self.warmup_steps = warmup_steps
+        self.warmup_steps = max(1, warmup_steps)
         self.enabled = enabled and torch.cuda.is_available()
         self._graph: Any = None
         self._step_count = 0
+        self._side_stream: Any = None
         self._static_x: torch.Tensor | None = None
         self._static_y: torch.Tensor | None = None
         self._static_loss: torch.Tensor | None = None
 
+    @property
+    def captured(self) -> bool:
+        """True once a graph has been recorded and is being replayed."""
+        return self._graph is not None
+
     def _run_step(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         """Execute one normal (non-captured) training step."""
-        self.optimizer.zero_grad()
-        pred = self.model(x)
-        loss = self.loss_fn(pred, y)
+        self.optimizer.zero_grad(set_to_none=True)
+        loss = self.loss_fn(self.model(x), y)
         loss.backward()
         self.optimizer.step()
         return loss
 
+    def _optimizers(self) -> list[torch.optim.Optimizer]:
+        return list(getattr(self.optimizer, "optimizers", [self.optimizer]))
+
+    def _make_capturable(self) -> None:
+        """Switch optimisers with a ``capturable`` option to graph-safe mode."""
+        for opt in self._optimizers():
+            for group in opt.param_groups:
+                if "capturable" not in group or group["capturable"]:
+                    continue
+                group["capturable"] = True
+                # Keep the LR in a device tensor so a graph replay reads the
+                # current value (a Python float would be frozen at capture).
+                # Schedulers update tensor LRs in place.
+                if not torch.is_tensor(group["lr"]):
+                    device = group["params"][0].device
+                    group["lr"] = torch.tensor(float(group["lr"]), device=device)
+                for p in group["params"]:
+                    st = opt.state.get(p, {})
+                    if torch.is_tensor(st.get("step")):
+                        st["step"] = st["step"].to(device=p.device, dtype=torch.float32)
+
+    def _capture(self, x: torch.Tensor, y: torch.Tensor) -> None:
+        self._make_capturable()
+        self._static_x = x.clone()
+        self._static_y = y.clone()
+        # Gradients must be None so the captured backward allocates them inside
+        # the graph's memory pool and each replay overwrites (not accumulates).
+        self.optimizer.zero_grad(set_to_none=True)
+        torch.cuda.current_stream().wait_stream(self._side_stream)
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            loss = self.loss_fn(self.model(self._static_x), self._static_y)
+            loss.backward()
+            self.optimizer.step()
+        self._static_loss = loss
+        self._graph = graph
+
     def __call__(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        """Run a training step, using graph replay after warm-up.
+        """Run one training step; returns the (scalar) loss tensor.
 
-        Parameters
-        ----------
-        x : torch.Tensor
-            Model input (shape must be static after warm-up).
-        y : torch.Tensor
-            Target (shape must be static after warm-up).
-
-        Returns
-        -------
-        torch.Tensor
-            Scalar loss value.
+        After capture the returned tensor is a static buffer that the next
+        call overwrites — call ``.item()`` or ``.clone()`` to keep it.
         """
-        if not self.enabled:
-            return self._run_step(x, y)
-
-        self._step_count += 1
-
-        if self._step_count <= self.warmup_steps:
+        if not (self.enabled and x.is_cuda):
             return self._run_step(x, y)
 
         if self._graph is None:
-            # Allocate static tensors and capture
-            self._static_x = x.clone()
-            self._static_y = y.clone()
-            self._graph = torch.cuda.CUDAGraph()
+            self._step_count += 1
+            if self._side_stream is None:
+                self._side_stream = torch.cuda.Stream()
+            if self._step_count <= self.warmup_steps:
+                # Warm-up on a side stream, as required before graph capture.
+                self._side_stream.wait_stream(torch.cuda.current_stream())
+                with torch.cuda.stream(self._side_stream):
+                    loss = self._run_step(x, y)
+                torch.cuda.current_stream().wait_stream(self._side_stream)
+                return loss
             try:
-                with torch.cuda.graph(self._graph):
-                    self._static_loss = self._run_step(self._static_x, self._static_y)
+                self._capture(x, y)
             except RuntimeError as exc:
                 import warnings
 
@@ -411,9 +460,9 @@ class StaticCaptureTraining:
                 )
                 self._graph = None
                 self.enabled = False
+                self.optimizer.zero_grad(set_to_none=True)
                 return self._run_step(x, y)
 
-        # Replay: copy new data into static buffers, replay graph
         self._static_x.copy_(x)
         self._static_y.copy_(y)
         self._graph.replay()

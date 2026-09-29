@@ -187,6 +187,93 @@ def test_static_capture_reset():
     assert capturer._graph is None
 
 
+def test_static_capture_cpu_tensors_never_attempt_capture():
+    """CPU data must run eagerly without trying (and warning about) graph capture."""
+    import warnings
+
+    model = nn.Linear(4, 2)
+    opt = torch.optim.Adam(model.parameters(), lr=1e-3)
+    capturer = StaticCaptureTraining(model, opt, loss_fn=nn.functional.mse_loss, warmup_steps=1)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        for _ in range(4):
+            capturer(torch.randn(2, 4), torch.randn(2, 2))
+    assert capturer._graph is None
+
+
+def _capture_vs_eager(optimizer_cls):
+    torch.manual_seed(0)
+    data = [
+        (torch.randn(8, 16, device="cuda"), torch.randn(8, 4, device="cuda")) for _ in range(30)
+    ]
+
+    def make():
+        torch.manual_seed(1)
+        m = nn.Sequential(nn.Linear(16, 32), nn.GELU(), nn.Linear(32, 4)).cuda()
+        return m, optimizer_cls(m.parameters(), lr=1e-2)
+
+    m_eager, o_eager = make()
+    for x, y in data:
+        o_eager.zero_grad()
+        nn.functional.mse_loss(m_eager(x), y).backward()
+        o_eager.step()
+
+    m_graph, o_graph = make()
+    capturer = StaticCaptureTraining(m_graph, o_graph, nn.functional.mse_loss, warmup_steps=3)
+    for x, y in data:
+        capturer(x, y)
+    return capturer, m_eager, m_graph
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU")
+@pytest.mark.parametrize("optimizer_cls", [torch.optim.Adam, torch.optim.AdamW, torch.optim.SGD])
+def test_static_capture_really_captures_and_matches_eager(optimizer_cls):
+    capturer, m_eager, m_graph = _capture_vs_eager(optimizer_cls)
+    assert capturer.captured, "graph capture fell back to eager mode"
+    for pe, pg in zip(m_eager.parameters(), m_graph.parameters()):
+        torch.testing.assert_close(pg, pe, atol=1e-4, rtol=1e-4)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU")
+@pytest.mark.parametrize("scheduler", ["torch_cosine", "warmup_cosine"])
+@pytest.mark.parametrize("optimizer_cls", [torch.optim.Adam, torch.optim.AdamW])
+def test_static_capture_follows_lr_scheduler(optimizer_cls, scheduler):
+    """A captured step must use the *current* LR, not the one at capture time."""
+    from solaris.utils import WarmupCosineScheduler
+
+    torch.manual_seed(0)
+    data = [
+        (torch.randn(8, 16, device="cuda"), torch.randn(8, 4, device="cuda")) for _ in range(20)
+    ]
+
+    def make():
+        torch.manual_seed(1)
+        m = nn.Sequential(nn.Linear(16, 32), nn.GELU(), nn.Linear(32, 4)).cuda()
+        o = optimizer_cls(m.parameters(), lr=1e-2)
+        if scheduler == "torch_cosine":
+            sch = torch.optim.lr_scheduler.CosineAnnealingLR(o, T_max=20)
+        else:
+            sch = WarmupCosineScheduler(o, warmup_epochs=3, total_epochs=20, base_lr=1e-2)
+        return m, o, sch
+
+    m_eager, o_eager, s_eager = make()
+    for x, y in data:
+        o_eager.zero_grad()
+        nn.functional.mse_loss(m_eager(x), y).backward()
+        o_eager.step()
+        s_eager.step()
+
+    m_graph, o_graph, s_graph = make()
+    capturer = StaticCaptureTraining(m_graph, o_graph, nn.functional.mse_loss, warmup_steps=3)
+    for x, y in data:
+        capturer(x, y)
+        s_graph.step()
+
+    assert capturer.captured
+    for pe, pg in zip(m_eager.parameters(), m_graph.parameters()):
+        torch.testing.assert_close(pg, pe, atol=1e-4, rtol=1e-4)
+
+
 # --- WarmupCosineScheduler ---------------------------------------------------------
 
 
