@@ -29,7 +29,12 @@ class Module(nn.Module):
         Model metadata. Defaults to a blank ``ModelMetaData`` instance.
     """
 
-    _solaris_version: str = "0.1.0"
+    @property
+    def _solaris_version(self) -> str:
+        """Library version recorded in checkpoints written by :meth:`save`."""
+        import solaris
+
+        return solaris.__version__
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Wrap each subclass __init__ to auto-capture constructor args.

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "solaris-rocm"
-version = "0.1.0"
+version = "0.2.0"
 description = "Physics AI framework for AMD GPUs via ROCm — Solaris"
 readme = "README.md"
 license = { file = "LICENSE" }
