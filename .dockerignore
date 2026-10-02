@@ -1,10 +1,26 @@
+# Version control and local environments
 .git
-__pycache__
+.venv
 venv
 env
 .env
+.claude
+.vscode
+
+# Caches
+__pycache__
+.pytest_cache
+.ruff_cache
+.coverage
+
+# Data, checkpoints and generated results (can be many GB)
 data/
+checkpoints/
 results/
+projects/*/data/
+projects/*/checkpoints/
+projects/*/results/
 *.ckpt
 *.pt
 *.pth
+*.npz
