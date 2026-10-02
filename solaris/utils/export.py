@@ -3,11 +3,28 @@
 
 """ONNX model export with optional onnxruntime validation."""
 
+import copy
 import warnings
 from pathlib import Path
 
 import torch
 import torch.nn as nn
+
+
+def _with_real_weights(model: nn.Module) -> nn.Module:
+    """Copy of ``model`` whose complex parameters are stored as real ``(..., 2)`` tensors.
+
+    ONNX has no complex tensor type.  Solaris spectral layers accept their
+    weights either as complex tensors or as real (real, imag) views, so the
+    exported copy computes exactly the same function; ``model`` is untouched.
+    """
+    exportable = copy.deepcopy(model)
+    for module in exportable.modules():
+        for name, param in list(module.named_parameters(recurse=False)):
+            if param.is_complex():
+                real = nn.Parameter(torch.view_as_real(param.detach()).clone())
+                setattr(module, name, real)
+    return exportable
 
 
 def export_onnx(
@@ -36,9 +53,11 @@ def export_onnx(
     """
     try:
         import onnx  # noqa: PLC0415
+        import onnxscript  # noqa: F401, PLC0415  (needed by torch's ONNX exporter)
     except ImportError as e:
         raise ImportError(
-            "onnx is required for ONNX export. Install it with: pip install 'solaris-rocm[export]'"
+            "onnx and onnxscript are required for ONNX export. "
+            "Install them with: pip install 'solaris-rocm[export]'"
         ) from e
 
     path = Path(path)
@@ -46,17 +65,20 @@ def export_onnx(
 
     model.eval()
     inputs = dummy_input if isinstance(dummy_input, tuple) else (dummy_input,)
+    exportable = _with_real_weights(model).eval()
 
     with torch.no_grad():
         torch.onnx.export(
-            model,
+            exportable,
             inputs,
             str(path),
             opset_version=opset_version,
             input_names=[f"input_{i}" for i in range(len(inputs))],
             output_names=["output"],
-            dynamic_axes={f"input_{i}": {0: "batch"} for i in range(len(inputs))}
-            | {"output": {0: "batch"}},
+            # Batch dimension dynamic where possible (Dim.AUTO keeps size-1
+            # example batches from failing the export).
+            dynamic_shapes=tuple({0: torch.export.Dim.AUTO} for _ in inputs),
+            dynamo=True,
         )
 
     # Validate the exported model
