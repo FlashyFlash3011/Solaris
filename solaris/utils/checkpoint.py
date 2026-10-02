@@ -10,11 +10,10 @@ Provides two checkpoint strategies:
     ``torch.load``.
 
 ``save_checkpoint_distributed`` / ``load_checkpoint_distributed``
-    FSDP / DTensor sharded training.  Uses
-    ``torch.distributed.checkpoint`` (DCP) which writes one shard file per
-    rank and reconstructs on load regardless of the process count used to save.
-    Falls back automatically to the standard strategy when the model is not
-    wrapped in FSDP or DTensor.
+    FSDP sharded training.  Uses ``torch.distributed.checkpoint`` (DCP),
+    which writes each rank's shards and reloads them regardless of the number
+    of ranks used to save.  Falls back automatically to the standard strategy
+    when the model is not wrapped in FSDP.
 """
 
 from pathlib import Path
@@ -117,12 +116,14 @@ def save_checkpoint_distributed(
 ) -> None:
     """Save a sharded checkpoint using ``torch.distributed.checkpoint`` (DCP).
 
-    When *model* is wrapped in FSDP or uses DTensor, DCP writes one shard file
-    per rank under *path* (treated as a directory).  The checkpoint can be
-    loaded with any number of ranks via :func:`load_checkpoint_distributed`.
+    When *model* is wrapped in FSDP, every rank writes its own shards under the
+    directory *path* (call this on **all** ranks).  Model and optimizer state
+    go through DCP, so the checkpoint can be loaded with a different number of
+    ranks; epoch, loss, scheduler state and ``extra`` are written by rank 0 to
+    ``path/meta.pt``.
 
-    Falls back to :func:`save_checkpoint` (standard ``torch.save``) when the
-    model is not FSDP-wrapped or when DCP is unavailable.
+    Falls back to :func:`save_checkpoint` (standard ``torch.save`` file) when
+    the model is not FSDP-wrapped.
 
     Parameters
     ----------
@@ -135,30 +136,28 @@ def save_checkpoint_distributed(
         save_checkpoint(path, model, optimizer, scheduler, epoch, loss, extra)
         return
 
-    try:
-        import torch.distributed.checkpoint as dcp
-        from torch.distributed.checkpoint.state_dict import get_state_dict
-    except ImportError:
-        save_checkpoint(path, model, optimizer, scheduler, epoch, loss, extra)
-        return
+    import torch.distributed as dist
+    import torch.distributed.checkpoint as dcp
+    from torch.distributed.checkpoint.state_dict import get_state_dict
 
     path = Path(path)
     path.mkdir(parents=True, exist_ok=True)
 
-    model_state, optim_state = get_state_dict(model, optimizer)
-    state: dict[str, Any] = {
-        "model": model_state,
-        "epoch": epoch,
-        "loss": loss,
-    }
-    if optim_state:
+    model_state, optim_state = get_state_dict(model, optimizer if optimizer is not None else [])
+    state: dict[str, Any] = {"model": model_state}
+    if optimizer is not None:
         state["optimizer"] = optim_state
-    if scheduler is not None:
-        state["scheduler_state_dict"] = scheduler.state_dict()
-    if extra:
-        state.update(extra)
-
     dcp.save(state, checkpoint_id=str(path))
+
+    if not dist.is_initialized() or dist.get_rank() == 0:
+        meta: dict[str, Any] = {"epoch": epoch, "loss": loss}
+        if scheduler is not None:
+            meta["scheduler_state_dict"] = scheduler.state_dict()
+        if extra:
+            meta.update(extra)
+        torch.save(meta, path / "meta.pt")
+    if dist.is_initialized():
+        dist.barrier()
 
 
 def load_checkpoint_distributed(
@@ -168,42 +167,44 @@ def load_checkpoint_distributed(
     scheduler=None,
     map_location: str | torch.device | None = None,
 ) -> dict[str, Any]:
-    """Load a DCP sharded checkpoint into an FSDP / DTensor model.
+    """Load a checkpoint written by :func:`save_checkpoint_distributed`.
 
-    Falls back to :func:`load_checkpoint` for non-FSDP models or when DCP is
-    unavailable.
+    Call on **all** ranks with the FSDP-wrapped *model* (and optimizer).  DCP
+    loads in place into tensors shaped like the current model's shards, so the
+    checkpoint may come from a run with a different number of ranks.
 
-    Parameters
-    ----------
-    path : str or Path
-        DCP checkpoint directory (or standard ``.pt`` file for fallback).
-    model, optimizer, scheduler, map_location :
-        Same as :func:`load_checkpoint`.
+    Falls back to :func:`load_checkpoint` for non-FSDP models.
+
+    Returns
+    -------
+    dict
+        The metadata (``epoch``, ``loss``, ``scheduler_state_dict`` if saved,
+        and any ``extra`` entries).
     """
     if not _is_fsdp(model):
         return load_checkpoint(path, model, optimizer, scheduler, map_location)
 
-    try:
-        import torch.distributed.checkpoint as dcp
-        from torch.distributed.checkpoint.state_dict import set_state_dict
-    except ImportError:
-        return load_checkpoint(path, model, optimizer, scheduler, map_location)
+    import torch.distributed.checkpoint as dcp
+    from torch.distributed.checkpoint.state_dict import get_state_dict, set_state_dict
 
-    model_state, optim_state = {}, {}
+    path = Path(path)
+    # Templates with the right shapes/sharding; DCP fills them in place.
+    model_state, optim_state = get_state_dict(model, optimizer if optimizer is not None else [])
     state: dict[str, Any] = {"model": model_state}
     if optimizer is not None:
         state["optimizer"] = optim_state
-
     dcp.load(state, checkpoint_id=str(path))
-
     set_state_dict(
         model,
-        optimizer,
-        model_state_dict=model_state,
-        optim_state_dict=optim_state if optimizer is not None else {},
+        optimizer if optimizer is not None else [],
+        model_state_dict=state["model"],
+        optim_state_dict=state.get("optimizer", {}),
     )
 
-    if scheduler is not None and "scheduler_state_dict" in state:
-        scheduler.load_state_dict(state["scheduler_state_dict"])
-
-    return state
+    meta_path = path / "meta.pt"
+    meta: dict[str, Any] = {}
+    if meta_path.exists():
+        meta = torch.load(meta_path, map_location="cpu", weights_only=False)
+    if scheduler is not None and "scheduler_state_dict" in meta:
+        scheduler.load_state_dict(meta["scheduler_state_dict"])
+    return meta
