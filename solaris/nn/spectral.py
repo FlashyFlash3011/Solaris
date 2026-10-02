@@ -23,6 +23,57 @@ def _fft_input(x: torch.Tensor) -> torch.Tensor:
     return x if x.dtype in (torch.float32, torch.float64) else x.float()
 
 
+def _pad_to(t: torch.Tensor, dim: int, size: int) -> torch.Tensor:
+    """Zero-pad ``t`` at the end of ``dim`` up to ``size``.
+
+    Spectra are assembled with concatenation rather than in-place slice
+    writes: slice assignment into complex tensors is not supported by the
+    ONNX exporter (and allocates a full zero spectrum that is then patched).
+    """
+    missing = size - t.shape[dim]
+    if missing <= 0:
+        return t
+    if t.is_complex() and torch.compiler.is_exporting():  # no complex zeros in ONNX
+        return torch.complex(_pad_to(t.real, dim, size), _pad_to(t.imag, dim, size))
+    shape = list(t.shape)
+    shape[dim] = missing
+    return torch.cat([t, t.new_zeros(shape)], dim=dim)
+
+
+def _stack_signed(low: torch.Tensor, high: torch.Tensor, dim: int, size: int) -> torch.Tensor:
+    """Place ``low`` at the start and ``high`` at the end of ``dim`` (length ``size``).
+
+    This is the layout of a full FFT axis: non-negative frequencies first,
+    negative frequencies last, zeros in between.
+    """
+    if low.is_complex() and torch.compiler.is_exporting():  # no complex zeros in ONNX
+        return torch.complex(
+            _stack_signed(low.real, high.real, dim, size),
+            _stack_signed(low.imag, high.imag, dim, size),
+        )
+    mid = list(low.shape)
+    mid[dim] = size - low.shape[dim] - high.shape[dim]
+    return torch.cat([low, low.new_zeros(mid), high], dim=dim)
+
+
+def complex_einsum(equation: str, x: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
+    """``einsum(equation, x, w)`` for a complex spectrum ``x``.
+
+    ``w`` is either a complex weight (the normal case: one fast complex
+    einsum) or a real ``(..., 2)`` tensor holding (real, imag) — the form
+    :func:`solaris.utils.export_onnx` uses, because ONNX has no complex type.
+    The real path does the same arithmetic with four real einsums.
+    """
+    if w.is_complex():
+        return torch.einsum(equation, x, w.to(x.dtype))
+    wr = w[..., 0].to(x.real.dtype)
+    wi = w[..., 1].to(x.real.dtype)
+    xr, xi = x.real, x.imag
+    real = torch.einsum(equation, xr, wr) - torch.einsum(equation, xi, wi)
+    imag = torch.einsum(equation, xr, wi) + torch.einsum(equation, xi, wr)
+    return torch.complex(real, imag)
+
+
 def _resolve_tp_group(layer: nn.Module) -> dist.ProcessGroup | None:
     if layer._tp_group is not None:
         return layer._tp_group
@@ -63,18 +114,15 @@ class SpectralConv1d(nn.Module):
         )
 
     def _mul(self, x: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
-        return torch.einsum("bix,iox->box", x, w)
+        return complex_einsum("bix,iox->box", x, w)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         bsz, _, nx = x.shape
         mx = min(self.modes_x, nx // 2 + 1)
         with torch.amp.autocast(device_type=x.device.type, enabled=False):
             x_ft = torch.fft.rfft(_fft_input(x), norm="ortho")
-            out_ft = torch.zeros(
-                bsz, self.out_channels, nx // 2 + 1, dtype=x_ft.dtype, device=x.device
-            )
-            w = self.weights[:, :, :mx].to(x_ft.dtype)
-            out_ft[:, :, :mx] = self._mul(x_ft[:, :, :mx], w)
+            w = self.weights[:, :, :mx]
+            out_ft = _pad_to(self._mul(x_ft[:, :, :mx], w), -1, nx // 2 + 1)
             out = torch.fft.irfft(out_ft, n=nx, norm="ortho")
         return out.to(x.dtype)
 
@@ -128,7 +176,7 @@ class SpectralConv2d(nn.Module):
         return _resolve_tp_group(self) if self.distributed else None
 
     def _mul(self, x: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
-        return torch.einsum("bixy,ioxy->boxy", x, w)
+        return complex_einsum("bixy,ioxy->boxy", x, w)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.distributed:
@@ -141,14 +189,14 @@ class SpectralConv2d(nn.Module):
         my = min(self.modes_y, ny // 2 + 1)
         with torch.amp.autocast(device_type=x.device.type, enabled=False):
             x_ft = torch.fft.rfft2(_fft_input(x), norm="ortho")
-            out_ft = torch.zeros(
-                bsz, self.out_channels, nx, ny // 2 + 1, dtype=x_ft.dtype, device=x.device
-            )
             if mx > 0:  # a 1-row grid has no modes to mix ([-0:] would select everything)
-                w1 = self.weights1[:, :, :mx, :my].to(x_ft.dtype)
-                w2 = self.weights2[:, :, :mx, :my].to(x_ft.dtype)
-                out_ft[:, :, :mx, :my] = self._mul(x_ft[:, :, :mx, :my], w1)
-                out_ft[:, :, -mx:, :my] = self._mul(x_ft[:, :, -mx:, :my], w2)
+                w1 = self.weights1[:, :, :mx, :my]
+                w2 = self.weights2[:, :, :mx, :my]
+                low = self._mul(x_ft[:, :, :mx, :my], w1)  # k_x >= 0
+                high = self._mul(x_ft[:, :, -mx:, :my], w2)  # k_x < 0
+                out_ft = _pad_to(_stack_signed(low, high, -2, nx), -1, ny // 2 + 1)
+            else:
+                out_ft = x_ft.new_zeros(bsz, self.out_channels, nx, ny // 2 + 1)
             out = torch.fft.irfft2(out_ft, s=(nx, ny), norm="ortho")
         return out.to(x.dtype)
 
@@ -173,8 +221,8 @@ class SpectralConv2d(nn.Module):
             col0 = rank * w_local
             n_cols = max(0, min(my, col0 + w_local) - col0)
             if n_cols > 0 and mx > 0:
-                w1 = self.weights1[:, :, :mx, col0 : col0 + n_cols].to(x_ft.dtype)
-                w2 = self.weights2[:, :, :mx, col0 : col0 + n_cols].to(x_ft.dtype)
+                w1 = self.weights1[:, :, :mx, col0 : col0 + n_cols]
+                w2 = self.weights2[:, :, :mx, col0 : col0 + n_cols]
                 out_ft[:, :, :mx, :n_cols] = self._mul(x_ft[:, :, :mx, :n_cols], w1)
                 out_ft[:, :, -mx:, :n_cols] = self._mul(x_ft[:, :, -mx:, :n_cols], w2)
             else:
@@ -232,7 +280,7 @@ class SpectralConv3d(nn.Module):
         return _resolve_tp_group(self) if self.distributed else None
 
     def _mul(self, x: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
-        return torch.einsum("bixyz,ioxyz->boxyz", x, w)
+        return complex_einsum("bixyz,ioxyz->boxyz", x, w)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.distributed and _is_multi_rank(self._tp_group_resolved()):
@@ -247,23 +295,19 @@ class SpectralConv3d(nn.Module):
         mz = min(self.modes_z, nz // 2 + 1)
         with torch.amp.autocast(device_type=x.device.type, enabled=False):
             x_ft = torch.fft.rfftn(_fft_input(x), dim=[-3, -2, -1], norm="ortho")
-            out_ft = torch.zeros(
-                bsz, self.out_channels, nx, ny, nz // 2 + 1, dtype=x_ft.dtype, device=x.device
-            )
-
-            def w(p: torch.Tensor) -> torch.Tensor:
-                return p[:, :, :mx, :my, :mz].to(x_ft.dtype)
-
             if mx > 0 and my > 0:  # [-0:] would select the whole axis
-                out_ft[:, :, :mx, :my, :mz] = self._mul(x_ft[:, :, :mx, :my, :mz], w(self.weights1))
-                out_ft[:, :, -mx:, :my, :mz] = self._mul(
-                    x_ft[:, :, -mx:, :my, :mz], w(self.weights2)
-                )
-                out_ft[:, :, :mx, -my:, :mz] = self._mul(
-                    x_ft[:, :, :mx, -my:, :mz], w(self.weights3)
-                )
-                out_ft[:, :, -mx:, -my:, :mz] = self._mul(
-                    x_ft[:, :, -mx:, -my:, :mz], w(self.weights4)
-                )
+
+                def w(p: torch.Tensor) -> torch.Tensor:
+                    return p[:, :, :mx, :my, :mz]
+
+                b1 = self._mul(x_ft[:, :, :mx, :my, :mz], w(self.weights1))
+                b2 = self._mul(x_ft[:, :, -mx:, :my, :mz], w(self.weights2))
+                b3 = self._mul(x_ft[:, :, :mx, -my:, :mz], w(self.weights3))
+                b4 = self._mul(x_ft[:, :, -mx:, -my:, :mz], w(self.weights4))
+                low_x = _stack_signed(b1, b3, -2, ny)  # k_x >= 0, both signs of k_y
+                high_x = _stack_signed(b2, b4, -2, ny)  # k_x < 0
+                out_ft = _pad_to(_stack_signed(low_x, high_x, -3, nx), -1, nz // 2 + 1)
+            else:
+                out_ft = x_ft.new_zeros(bsz, self.out_channels, nx, ny, nz // 2 + 1)
             out = torch.fft.irfftn(out_ft, s=(nx, ny, nz), dim=[-3, -2, -1], norm="ortho")
         return out.to(x.dtype)

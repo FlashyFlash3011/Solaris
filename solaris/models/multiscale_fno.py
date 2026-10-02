@@ -32,6 +32,7 @@ import torch.nn as nn
 from solaris.core.meta import ModelMetaData
 from solaris.core.module import Module
 from solaris.nn.norm import UNSET, make_norm, resolve_norm
+from solaris.nn.spectral import _pad_to, _stack_signed, complex_einsum
 
 
 class BandSpectralConv2d(nn.Module):
@@ -107,22 +108,19 @@ class BandSpectralConv2d(nn.Module):
     def _forward_fp32(self, x: torch.Tensor) -> torch.Tensor:
         B, C, H, W = x.shape
         x_ft = torch.fft.rfft2(x, norm="ortho")
-        out_ft = torch.zeros(B, self.out_channels, H, W // 2 + 1, dtype=x_ft.dtype, device=x.device)
         mx, my = self._block(H, W)
         if mx == 0:
+            out_ft = x_ft.new_zeros(B, self.out_channels, H, W // 2 + 1)
             return torch.fft.irfft2(out_ft, s=(H, W), norm="ortho")
 
-        mask = self.band_mask(H, W, device=x.device).to(x_ft.dtype)
-        w1 = self.weights1[:, :, :mx, :my].to(x_ft.dtype)
-        w2 = self.weights2[:, :, :mx, :my].to(x_ft.dtype)
+        mask = self.band_mask(H, W, device=x.device).to(x_ft.real.dtype)
+        w1 = self.weights1[:, :, :mx, :my]
+        w2 = self.weights2[:, :, :mx, :my]
 
         # Positive-k_x rows, then negative-k_x rows of the retained block
-        out_ft[:, :, :mx, :my] = torch.einsum(
-            "bixy,ioxy->boxy", x_ft[:, :, :mx, :my] * mask[:mx, :my], w1
-        )
-        out_ft[:, :, -mx:, :my] = torch.einsum(
-            "bixy,ioxy->boxy", x_ft[:, :, -mx:, :my] * mask[-mx:, :my], w2
-        )
+        low = complex_einsum("bixy,ioxy->boxy", x_ft[:, :, :mx, :my] * mask[:mx, :my], w1)
+        high = complex_einsum("bixy,ioxy->boxy", x_ft[:, :, -mx:, :my] * mask[-mx:, :my], w2)
+        out_ft = _pad_to(_stack_signed(low, high, -2, H), -1, W // 2 + 1)
         return torch.fft.irfft2(out_ft, s=(H, W), norm="ortho")
 
 
