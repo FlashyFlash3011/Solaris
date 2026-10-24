@@ -9,49 +9,41 @@ description = "Physics AI framework for AMD GPUs via ROCm — Solaris"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10,<3.13"
+# Only what the library itself imports. torch is required but deliberately not
+# pinned to a build: on AMD GPUs install a ROCm build of PyTorch *first* (see the
+# README) so pip never replaces it with a generic wheel.
 dependencies = [
     "torch>=2.4.0",
     "numpy>=1.24.0",
-    "hydra-core>=1.3.0",
-    "omegaconf>=2.3.0",
-    "fsspec>=2023.1.0",
-    "tensordict>=0.5.0",
-    "einops>=0.7.0",
-    "tqdm>=4.65.0",
-    "pydantic>=2.0.0",
     "loguru>=0.7.0",
 ]
 
 [project.optional-dependencies]
-gnns = [
-    "torch-geometric>=2.4.0",
-    "torch-scatter",
-    "torch-cluster",
-]
-datapipes = [
-    "h5py>=3.8.0",
-    "zarr>=2.14.0",
-    "netCDF4>=1.6.0",
-    "dask>=2023.1.0",
-]
-viz = [
-    "matplotlib>=3.7.0",
-    "pyvista>=0.40.0",
-    "vtk>=9.2.0",
+# HDF5Dataset
+datapipes = ["h5py>=3.8.0"]
+# plotting helpers used by the demos and benchmarks
+viz = ["matplotlib>=3.7.0"]
+# everything needed to run projects/ and examples/ (FD solvers + figures)
+demos = ["scipy>=1.10.0", "matplotlib>=3.7.0"]
+# HyperparameterTuner
+tuning = ["optuna>=3.0.0"]
+# WandbLogger
+tracking = ["wandb>=0.15.0"]
+# export_onnx (+ onnxruntime validation)
+export = [
+    "onnx>=1.14.0",
+    "onnxruntime>=1.16.0",
+    "onnxscript>=0.1.0",
 ]
 dev = [
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
     "ruff>=0.1.0",
     "pre-commit>=3.3.0",
-]
-tuning = [
-    "optuna >= 3.0.0"
-]
-export = [
-    "onnx >= 1.14.0",
-    "onnxruntime >= 1.16.0",
-    "onnxscript >= 0.1.0",
+    "mypy>=1.8.0",
+    "scipy>=1.10.0",
+    "matplotlib>=3.7.0",
+    "h5py>=3.8.0",
 ]
 
 [project.entry-points."solaris.models"]
