@@ -47,9 +47,23 @@ def test_fully_connected_forward():
 
 
 def test_model_metadata():
-    meta = ModelMetaData(name="Test", nvp_tags=["pde"])
+    meta = ModelMetaData(name="Test", tags=["pde"])
     assert meta.name == "Test"
-    assert "pde" in meta.nvp_tags
+    assert meta.tags == ["pde"]
+
+
+def test_model_metadata_default_name():
+    assert ModelMetaData().name == "Solaris Model"
+
+
+def test_model_metadata_nvp_tags_is_a_deprecated_alias():
+    from solaris.exceptions import LegacyFeatureWarning
+
+    with pytest.warns(LegacyFeatureWarning, match="tags"):
+        meta = ModelMetaData(name="Test", nvp_tags=["pde"])
+    assert meta.tags == ["pde"]
+    with pytest.warns(LegacyFeatureWarning):
+        assert meta.nvp_tags == ["pde"]
 
 
 def test_from_checkpoint(tmp_path):

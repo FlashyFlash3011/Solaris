@@ -10,7 +10,7 @@ from solaris.core.module import Module
 
 
 class ModelRegistry:
-    """Singleton registry that discovers PhysicsNeMo models via entry points.
+    """Singleton registry that discovers Solaris models via entry points.
 
     Entry points should be declared in ``pyproject.toml`` under the group
     ``solaris.models``::

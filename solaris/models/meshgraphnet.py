@@ -84,7 +84,7 @@ class MeshGraphNet(Module):
 
     _meta = ModelMetaData(
         name="MeshGraphNet",
-        nvp_tags=["cfd", "gnn", "mesh"],
+        tags=["cfd", "gnn", "mesh"],
     )
 
     def __init__(

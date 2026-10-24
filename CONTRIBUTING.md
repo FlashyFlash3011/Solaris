@@ -95,7 +95,7 @@ class YourModel(Module):
 
     _meta = ModelMetaData(
         name="YourModel",
-        nvp_tags=["pde", "your-tag"],
+        tags=["pde", "your-tag"],
         amp=True,
     )
 

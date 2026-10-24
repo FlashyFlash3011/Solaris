@@ -134,7 +134,7 @@ class CoupledOperator(Module):
 
     _meta = ModelMetaData(
         name="CoupledOperator",
-        nvp_tags=["multi-physics", "coupling", "operator-learning", "pde"],
+        tags=["multi-physics", "coupling", "operator-learning", "pde"],
         amp=False,
     )
 

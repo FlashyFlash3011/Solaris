@@ -232,7 +232,7 @@ class MultiScaleFNO(Module):
 
     _meta = ModelMetaData(
         name="MultiScaleFNO",
-        nvp_tags=["pde", "operator-learning", "fourier", "multi-scale", "attention"],
+        tags=["pde", "operator-learning", "fourier", "multi-scale", "attention"],
         amp=True,
     )
 

@@ -128,7 +128,7 @@ class WNO(Module):
 
     _meta = ModelMetaData(
         name="WNO",
-        nvp_tags=["pde", "operator-learning", "wavelet"],
+        tags=["pde", "operator-learning", "wavelet"],
         amp=True,
     )
 

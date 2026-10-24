@@ -88,7 +88,7 @@ class FNO(Module):
 
     _meta = ModelMetaData(
         name="FNO",
-        nvp_tags=["pde", "operator-learning", "fourier"],
+        tags=["pde", "operator-learning", "fourier"],
         amp=True,
     )
 

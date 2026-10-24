@@ -68,7 +68,7 @@ class NeuralResidualCorrector(Module):
 
     _meta = ModelMetaData(
         name="NeuralResidualCorrector",
-        nvp_tags=["pde", "hybrid-solver", "residual-learning", "operator-learning"],
+        tags=["pde", "hybrid-solver", "residual-learning", "operator-learning"],
         amp=True,
     )
 

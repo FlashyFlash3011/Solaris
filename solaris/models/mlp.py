@@ -30,7 +30,7 @@ class FullyConnected(Module):
         One of ``"relu"``, ``"gelu"``, ``"tanh"``, ``"silu"``, ``"stan"``.
     """
 
-    _meta = ModelMetaData(name="FullyConnected", nvp_tags=["pinn", "mlp"])
+    _meta = ModelMetaData(name="FullyConnected", tags=["pinn", "mlp"])
 
     _ACT_MAP = {
         "relu": nn.ReLU,

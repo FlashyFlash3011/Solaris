@@ -124,7 +124,7 @@ class AFNO(Module):
 
     _meta = ModelMetaData(
         name="AFNO",
-        nvp_tags=["weather", "climate", "fourier", "transformer"],
+        tags=["weather", "climate", "fourier", "transformer"],
         amp=True,
     )
 

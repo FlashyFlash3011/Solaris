@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024, Contributors
 # SPDX-License-Identifier: Apache-2.0
 
-"""Solaris warning and exception hirarchy"""
+"""Solaris warning and exception hierarchy."""
 
 
 class SolarisWarning(UserWarning):

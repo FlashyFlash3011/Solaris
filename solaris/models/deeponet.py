@@ -54,7 +54,7 @@ class DeepONet(Module):
 
     _meta = ModelMetaData(
         name="DeepONet",
-        nvp_tags=["operator-learning", "deeponet", "pde"],
+        tags=["operator-learning", "deeponet", "pde"],
         amp=True,
     )
 

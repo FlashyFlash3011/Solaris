@@ -38,7 +38,7 @@ class UNO(Module):
 
     _meta = ModelMetaData(
         name="UNO",
-        nvp_tags=["pde", "operator-learning", "fourier", "u-net"],
+        tags=["pde", "operator-learning", "fourier", "u-net"],
         amp=True,
     )
 

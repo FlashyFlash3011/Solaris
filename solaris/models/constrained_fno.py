@@ -78,7 +78,7 @@ class ConstrainedFNO(Module):
 
     _meta = ModelMetaData(
         name="ConstrainedFNO",
-        nvp_tags=["pde", "operator-learning", "fourier", "physics-constrained"],
+        tags=["pde", "operator-learning", "fourier", "physics-constrained"],
         amp=True,
     )
 
