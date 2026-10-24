@@ -10,8 +10,8 @@ forward and backward passes together form a consistent gradient flow:
 +----------------------------+---------------------+---------------------+
 | Function                   | Forward             | Backward            |
 +============================+=====================+=====================+
-| scatter_to_model_parallel  | split along dim 0   | all-gather          |
-| gather_from_model_parallel | all-gather          | split along dim 0   |
+| scatter_to_model_parallel  | split along ``dim`` | all-gather          |
+| gather_from_model_parallel | all-gather          | split along ``dim`` |
 | reduce_from_model_parallel | all-reduce          | identity            |
 | copy_to_model_parallel     | identity            | all-reduce          |
 +----------------------------+---------------------+---------------------+
@@ -27,11 +27,13 @@ Usage
         scatter_to_model_parallel_region,
     )
 
-    # Scatter input across TP ranks before a column-parallel linear layer
-    x_local = scatter_to_model_parallel_region(x, group=tp_group)
-    y_local = local_linear(x_local)
-    # Gather outputs back across TP ranks
-    y = gather_from_model_parallel_region(y_local, group=tp_group)
+    # Column-parallel linear: each rank holds some *output* rows of W
+    y_local = copy_to_model_parallel_region(x, group=tp_group) @ W_rows.T
+    y = gather_from_model_parallel_region(y_local, group=tp_group, dim=-1)
+
+    # Row-parallel linear: each rank holds some *input* columns of W
+    x_local = scatter_to_model_parallel_region(x, group=tp_group, dim=-1)
+    y = reduce_from_model_parallel_region(x_local @ W_cols.T, group=tp_group)
 """
 
 import torch
@@ -50,52 +52,56 @@ def _get_rank(group: dist.ProcessGroup | None) -> int:
     return dist.get_rank(group)
 
 
+def _split(x: torch.Tensor, world: int, rank: int, dim: int) -> torch.Tensor:
+    if x.shape[dim] % world:
+        raise ValueError(
+            f"dimension {dim} of size {x.shape[dim]} is not divisible by world size {world}"
+        )
+    return x.chunk(world, dim=dim)[rank].contiguous()
+
+
+def _all_gather(x: torch.Tensor, group: dist.ProcessGroup | None, world: int, dim: int):
+    gathered = [torch.empty_like(x) for _ in range(world)]
+    dist.all_gather(gathered, x.contiguous(), group=group)
+    return torch.cat(gathered, dim=dim)
+
+
 class _ScatterToModelParallelRegion(torch.autograd.Function):
-    """Forward: scatter along dim 0.  Backward: all-gather."""
+    """Forward: keep this rank's slice along ``dim``.  Backward: all-gather."""
 
     @staticmethod
-    def forward(ctx, x: torch.Tensor, group: dist.ProcessGroup | None) -> torch.Tensor:
-        ctx.group = group
+    def forward(ctx, x: torch.Tensor, group: dist.ProcessGroup | None, dim: int) -> torch.Tensor:
+        ctx.group, ctx.dim = group, dim
         world = _get_world_size(group)
         if world == 1:
             return x
-        rank = _get_rank(group)
-        chunks = x.chunk(world, dim=0)
-        return chunks[rank].contiguous()
+        return _split(x, world, _get_rank(group), dim)
 
     @staticmethod
     def backward(ctx, grad: torch.Tensor):
-        group = ctx.group
-        world = _get_world_size(group)
+        world = _get_world_size(ctx.group)
         if world == 1:
-            return grad, None
-        gathered = [torch.empty_like(grad) for _ in range(world)]
-        dist.all_gather(gathered, grad.contiguous(), group=group)
-        return torch.cat(gathered, dim=0), None
+            return grad, None, None
+        return _all_gather(grad, ctx.group, world, ctx.dim), None, None
 
 
 class _GatherFromModelParallelRegion(torch.autograd.Function):
-    """Forward: all-gather along dim 0.  Backward: scatter."""
+    """Forward: all-gather along ``dim``.  Backward: keep this rank's slice."""
 
     @staticmethod
-    def forward(ctx, x: torch.Tensor, group: dist.ProcessGroup | None) -> torch.Tensor:
-        ctx.group = group
+    def forward(ctx, x: torch.Tensor, group: dist.ProcessGroup | None, dim: int) -> torch.Tensor:
+        ctx.group, ctx.dim = group, dim
         world = _get_world_size(group)
         if world == 1:
             return x
-        gathered = [torch.empty_like(x) for _ in range(world)]
-        dist.all_gather(gathered, x.contiguous(), group=group)
-        return torch.cat(gathered, dim=0)
+        return _all_gather(x, group, world, dim)
 
     @staticmethod
     def backward(ctx, grad: torch.Tensor):
-        group = ctx.group
-        world = _get_world_size(group)
+        world = _get_world_size(ctx.group)
         if world == 1:
-            return grad, None
-        rank = _get_rank(group)
-        chunks = grad.chunk(world, dim=0)
-        return chunks[rank].contiguous(), None
+            return grad, None, None
+        return _split(grad, world, _get_rank(ctx.group), ctx.dim), None, None
 
 
 class _ReduceFromModelParallelRegion(torch.autograd.Function):
@@ -142,24 +148,28 @@ class _CopyToModelParallelRegion(torch.autograd.Function):
 def scatter_to_model_parallel_region(
     x: torch.Tensor,
     group: dist.ProcessGroup | None = None,
+    dim: int = 0,
 ) -> torch.Tensor:
-    """Split *x* along dim 0 and keep only the local rank's slice.
+    """Split *x* along ``dim`` and keep only the local rank's slice.
 
-    Use before a row-parallel weight multiply where each rank holds a column
-    shard of the weight matrix.
+    Use before a row-parallel linear layer (``dim=-1``: each rank holds a
+    column shard of the weight and the matching slice of input features).
+    ``x.shape[dim]`` must be divisible by the group size.
     """
-    return _ScatterToModelParallelRegion.apply(x, group)
+    return _ScatterToModelParallelRegion.apply(x, group, dim)
 
 
 def gather_from_model_parallel_region(
     x: torch.Tensor,
     group: dist.ProcessGroup | None = None,
+    dim: int = 0,
 ) -> torch.Tensor:
-    """All-gather *x* along dim 0 across the tensor-parallel group.
+    """All-gather *x* along ``dim`` across the tensor-parallel group.
 
-    Use after a column-parallel linear layer to reconstruct the full output.
+    Use after a column-parallel linear layer (``dim=-1``) to reconstruct the
+    full output features.
     """
-    return _GatherFromModelParallelRegion.apply(x, group)
+    return _GatherFromModelParallelRegion.apply(x, group, dim)
 
 
 def reduce_from_model_parallel_region(
