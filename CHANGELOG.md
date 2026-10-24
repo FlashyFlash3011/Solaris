@@ -27,6 +27,13 @@ did not do what they claimed; this release fixes them and adds tests for each.
   cover different modes than in 0.1.0, so retrain MultiScaleFNO models.
 - **Distributed checkpoints** store epoch/loss/scheduler in `meta.pt` next to
   the DCP shards.
+- **`relative_l2_error`** now averages per-sample errors (the literature
+  convention). The old batch-pooled value is `reduction="pooled"`; reported
+  error numbers change accordingly.
+- **Checkpoint loading is safe by default** (`weights_only=True`); pass
+  `trusted=True` to load files containing arbitrary Python objects.
+- **Dependencies:** only `torch`, `numpy` and `loguru` are required; see the
+  extras (`datapipes`, `viz`, `demos`, `tuning`, `tracking`, `export`, `dev`).
 
 ### Fixed
 
