@@ -164,10 +164,13 @@ class DistributedManager:
         name: str,
         ranks: list,
         backend: str | None = None,
-    ) -> dist.ProcessGroup:
+    ) -> dist.ProcessGroup | None:
         """Manually create and register a named process group.
 
         Use this when you need a custom sub-group outside of a DeviceMesh.
+        Like ``torch.distributed.new_group`` it must be called on **every**
+        rank; ranks not listed in *ranks* get ``None`` back and nothing is
+        registered for them.
 
         Parameters
         ----------
@@ -180,6 +183,8 @@ class DistributedManager:
             same backend as the global group.
         """
         group = dist.new_group(ranks=ranks, backend=backend)
+        if not isinstance(group, dist.ProcessGroup):  # NON_GROUP_MEMBER sentinel
+            return None
         self._named_groups[name] = group
         return group
 

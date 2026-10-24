@@ -70,3 +70,30 @@ def _gloo_available() -> bool:
 )
 def test_spectral_conv2d_two_ranks_matches_single_process(H, W, modes):
     mp.spawn(_spectral_worker, args=(WORLD, _free_port(), H, W, modes), nprocs=WORLD, join=True)
+
+
+def _create_group_worker(rank: int, world: int, port: int) -> None:
+    os.environ["MASTER_ADDR"] = "127.0.0.1"
+    os.environ["MASTER_PORT"] = str(port)
+    os.environ.update(RANK=str(rank), WORLD_SIZE=str(world), LOCAL_RANK="0")
+    from solaris.distributed import DistributedManager
+
+    DistributedManager.reset()
+    manager = DistributedManager()
+    manager.initialize(device_type="cpu")
+    try:
+        group = manager.create_group("only_rank0", ranks=[0])
+        if rank == 0:
+            assert isinstance(group, dist.ProcessGroup)
+            assert manager.get_group("only_rank0") is group
+        else:
+            assert group is None
+            with pytest.raises(KeyError):
+                manager.get_group("only_rank0")
+    finally:
+        DistributedManager.reset()
+
+
+@pytest.mark.skipif(not _gloo_available(), reason="gloo backend unavailable")
+def test_create_group_returns_none_on_non_members():
+    mp.spawn(_create_group_worker, args=(WORLD, _free_port()), nprocs=WORLD, join=True)
