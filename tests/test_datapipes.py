@@ -21,9 +21,9 @@ def test_symmetry_augmentation_shape(H, W):
         "target": torch.randn(1, H, W),
     }
     out = aug(sample)
-    # Shape must be preserved (90° rotation on square; non-square may swap dims)
-    assert out["input"].shape[-1] in (H, W)
-    assert out["target"].shape[-1] in (H, W)
+    # Shapes are always preserved: non-square fields only rotate by 0° or 180°
+    assert out["input"].shape[-2:] == (H, W)
+    assert out["target"].shape[-2:] == (H, W)
 
 
 def test_symmetry_augmentation_consistency():
@@ -118,3 +118,78 @@ def test_physics_dataset_dict_npy(tmp_path):
     np.save(tmp_path / "a.npy", {"input": np.zeros((1, 4, 4)), "target": np.ones((1, 4, 4))})
     sample = PhysicsDataset(tmp_path)[0]
     assert sample["target"].sum() == 16
+
+
+# --- SymmetryAugmentation with vector fields -----------------------------------
+
+
+def _grad(phi):
+    """Periodic central-difference gradient: (d/dx along W, d/dy along H)."""
+    gx = (torch.roll(phi, -1, -1) - torch.roll(phi, 1, -1)) / 2
+    gy = (torch.roll(phi, -1, -2) - torch.roll(phi, 1, -2)) / 2
+    return torch.cat([gx, gy], dim=0)
+
+
+def _force(aug, k_rot, flip_h, flip_v):
+    """Make the augmentation's random draws deterministic."""
+    import random as _random
+
+    draws = iter([0.0, k_rot, 0.0 if flip_h else 1.0, 0.0 if flip_v else 1.0])
+    orig_random, orig_randint = _random.random, _random.randint
+    _random.random = lambda: next(draws)
+    _random.randint = lambda a, b: next(draws)
+    return orig_random, orig_randint
+
+
+@pytest.mark.parametrize("k_rot", [0, 1, 2, 3])
+@pytest.mark.parametrize("flip_h", [False, True])
+@pytest.mark.parametrize("flip_v", [False, True])
+def test_symmetry_augmentation_transforms_vector_components(k_rot, flip_h, flip_v):
+    """Augmenting a gradient field must equal the gradient of the augmented scalar."""
+    import random as _random
+
+    torch.manual_seed(0)
+    phi = torch.randn(1, 8, 8)
+    sample = {"phi": phi.clone(), "u": _grad(phi)}
+    aug = SymmetryAugmentation(
+        keys=["phi", "u"], p_rot=1.0, p_flip_h=1.0, p_flip_v=1.0, vector_channels={"u": [(0, 1)]}
+    )
+    saved = _force(aug, k_rot, flip_h, flip_v)
+    try:
+        out = aug(sample)
+    finally:
+        _random.random, _random.randint = saved
+    torch.testing.assert_close(out["u"], _grad(out["phi"]))
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_symmetry_augmentation_keeps_non_square_shape(seed):
+    import random as _random
+
+    _random.seed(seed)
+    aug = SymmetryAugmentation(keys=["x"], p_rot=1.0, p_flip_h=0.5, p_flip_v=0.5)
+    assert aug({"x": torch.randn(1, 4, 6)})["x"].shape == (1, 4, 6)
+
+
+def test_normalize_with_given_stats():
+    from solaris.datapipes.transforms import Normalize
+
+    out = Normalize(keys=["x"], mean=2.0, std=4.0)({"x": torch.tensor([2.0, 6.0])})
+    torch.testing.assert_close(out["x"], torch.tensor([0.0, 1.0]), atol=1e-5, rtol=1e-5)
+
+
+def test_random_crop_too_small_raises():
+    from solaris.datapipes.transforms import RandomCrop2d
+
+    with pytest.raises(ValueError, match="crop"):
+        RandomCrop2d(keys=["x"], crop_size=(8, 8))({"x": torch.randn(1, 4, 4)})
+
+
+def test_add_gaussian_noise_changes_only_selected_keys():
+    from solaris.datapipes.transforms import AddGaussianNoise
+
+    torch.manual_seed(0)
+    s = {"x": torch.zeros(1000), "y": torch.zeros(3)}
+    out = AddGaussianNoise(keys=["x"], std=0.1)(s)
+    assert 0.08 < out["x"].std() < 0.12
+    assert out["y"].abs().sum() == 0
