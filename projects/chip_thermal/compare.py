@@ -28,7 +28,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from solver import LAYOUT_LABELS, chip_floorplan_power_map, solve_heat_fd
+from solver import LAYOUT_LABELS, T_AMBIENT, chip_floorplan_power_map, solve_heat_fd
 
 from solaris.models.fno import FNO
 from solaris.utils import get_logger
@@ -125,9 +125,11 @@ def run_comparison(args):
 
     # ── Error statistics ──
     diff = T_fno_all - T_fd_all
-    rel_l2 = np.linalg.norm(diff.reshape(N, -1), axis=1) / (
-        np.linalg.norm(T_fd_all.reshape(N, -1), axis=1) + 1e-8
-    )
+    # Relative to the temperature *rise* above the 40 °C boundary — the part the
+    # model has to predict (relative to absolute °C every pixel would include the
+    # 40 °C offset and errors would look several times smaller).
+    rise = (T_fd_all - T_AMBIENT).reshape(N, -1)
+    rel_l2 = np.linalg.norm(diff.reshape(N, -1), axis=1) / (np.linalg.norm(rise, axis=1) + 1e-8)
     speedup = solver_total / fno_total
 
     # ── Summary table ──
@@ -137,7 +139,7 @@ def run_comparison(args):
     log.info(f"  FD Solver  total  : {solver_total:.1f}s  ({solver_per_ms:.1f} ms/layout)")
     log.info(f"  FNO        total  : {fno_total * 1000:.0f}ms  ({fno_per_ms:.2f} ms/layout)")
     log.info(f"  Speedup           : {speedup:.0f}×")
-    log.info(f"  Rel-L2 avg        : {np.mean(rel_l2):.4f}  (max {np.max(rel_l2):.4f})")
+    log.info(f"  Rel-L2 (rise) avg : {np.mean(rel_l2):.4f}  (max {np.max(rel_l2):.4f})")
     log.info("=" * 60)
 
     # ── Plot ──
@@ -220,7 +222,7 @@ def run_comparison(args):
         # Panel 3 — Absolute error
         im3 = axes[3].imshow(err, cmap="RdBu_r", origin="lower", interpolation="bilinear")
         axes[3].set_title(
-            f"|Error|  [°C]\nMax: {err.max():.1f}°C · Rel-L2: {rl2 * 100:.2f}%",
+            f"|Error|  [°C]\nMax: {err.max():.2f}°C · rel-L2 of rise: {rl2 * 100:.2f}%",
             fontsize=9,
             color="white",
             pad=6,
