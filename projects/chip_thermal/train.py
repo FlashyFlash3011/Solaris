@@ -242,7 +242,7 @@ def train_one_run(
         min_lr=args.lr * 0.01,
     )
     clipper = GradientClipper(max_norm=1.0)
-    stopper = EarlyStopping(patience=30, min_delta=1e-5, mode="min")
+    stopper = EarlyStopping(patience=args.patience, min_delta=1e-5) if args.patience else None
 
     # Mode curriculum — only for models that support set_modes()
     curriculum = None
@@ -334,7 +334,7 @@ def train_one_run(
                 pass
 
         # ── Early stopping ──
-        if stopper.step(val_loss):
+        if stopper is not None and stopper.step(val_loss):
             log.info(f"Early stopping at epoch {epoch} (patience={stopper.patience})")
             break
 
@@ -602,6 +602,14 @@ if __name__ == "__main__":
     p.add_argument("--hidden", type=int, default=64)
     p.add_argument("--modes", type=int, default=16)
     p.add_argument("--n_layers", type=int, default=4)
+    p.add_argument(
+        "--patience",
+        type=int,
+        default=0,
+        help="Stop after this many epochs without validation improvement (0 = off). "
+        "Off by default: with a fixed-length cosine schedule, stopping early skips the "
+        "low-learning-rate phase; the best checkpoint is kept either way.",
+    )
     p.add_argument(
         "--norm",
         default="none",

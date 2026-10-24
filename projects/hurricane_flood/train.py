@@ -368,7 +368,7 @@ def train(args) -> None:
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
-    early_stop = EarlyStopping(patience=15, min_delta=1e-5, mode="min")
+    early_stop = EarlyStopping(patience=args.patience, min_delta=1e-5) if args.patience else None
     clipper = GradientClipper(max_norm=1.0)
 
     best_val = float("inf")
@@ -429,7 +429,7 @@ def train(args) -> None:
                 },
             )
 
-        if early_stop.step(val_loss):
+        if early_stop is not None and early_stop.step(val_loss):
             log.info(f"Early stopping at epoch {epoch}")
             break
 
@@ -477,6 +477,14 @@ if __name__ == "__main__":
     p.add_argument("--hidden_flood", type=int, default=64)
     p.add_argument("--hidden_wind", type=int, default=48)
     p.add_argument("--n_layers", type=int, default=4)
+    p.add_argument(
+        "--patience",
+        type=int,
+        default=0,
+        help="Stop after this many epochs without validation improvement (0 = off). "
+        "Off by default: with a fixed-length cosine schedule, stopping early skips the "
+        "low-learning-rate phase; the best checkpoint is kept either way.",
+    )
     p.add_argument(
         "--norm",
         default="none",
