@@ -72,7 +72,9 @@ class Module(nn.Module):
                 k: v for k, v in bound.arguments.items() if k not in ("self", "meta")
             }
 
-        cls.__init__ = _auto_capture_init
+        cls.__init__ = _auto_capture_init  # type: ignore[method-assign]
+
+    _device_buf: torch.Tensor
 
     def __init__(self, meta: ModelMetaData | None = None) -> None:
         super().__init__()
@@ -199,7 +201,7 @@ class Module(nn.Module):
         if meta is None:
             meta = ModelMetaData(name=type(module).__name__)
 
-        class _Wrapper(cls):  # type: ignore[valid-type]
+        class _Wrapper(cls):  # type: ignore[valid-type,misc]
             def __init__(self) -> None:
                 super().__init__(meta=meta)
                 self.inner = module

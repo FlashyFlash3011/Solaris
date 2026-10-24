@@ -171,8 +171,10 @@ class CoupledOperator(Module):
             # Zero-init the residual projection so that at initialisation the
             # coupled output equals the independent operator outputs exactly.
             for conv in self.unadapters.values():
+                assert isinstance(conv, nn.Conv2d)
                 nn.init.zeros_(conv.weight)
-                nn.init.zeros_(conv.bias)
+                if conv.bias is not None:
+                    nn.init.zeros_(conv.bias)
 
         # operators are not JSON-serialisable
         self._capture_init_args(
@@ -231,9 +233,9 @@ class CoupledOperator(Module):
         # Re-project each such output so the guarantee holds on what we return.
         if self.coupling_mode != "direct":
             for name in self.field_names:
-                op = self.operators[name]
-                if hasattr(op, "apply_constraint"):
-                    outputs[name] = op.apply_constraint(inputs[name], outputs[name])
+                apply = getattr(self.operators[name], "apply_constraint", None)
+                if callable(apply):
+                    outputs[name] = apply(inputs[name], outputs[name])
         return outputs
 
     def coupling_strengths(self) -> torch.Tensor | None:
@@ -244,4 +246,6 @@ class CoupledOperator(Module):
         """
         if self.coupling_mode != "learned":
             return None
-        return self.coupling_layers[-1].coupling_matrix()
+        last = self.coupling_layers[-1]
+        assert isinstance(last, LearnedCouplingLayer)
+        return last.coupling_matrix()

@@ -11,10 +11,12 @@ import torch.nn.functional as F
 
 from solaris.core.meta import ModelMetaData
 from solaris.core.module import Module
-from solaris.nn.norm import UNSET, make_norm, resolve_norm
+from solaris.nn.norm import UNSET, NormArg, make_norm, resolve_norm
 
 
 class WaveletConv2d(nn.Module):
+    analysis_filters: torch.Tensor
+
     """2-D Haar wavelet convolution layer.
 
     Decomposes the input into LL/LH/HL/HH subbands using stride-2 convolutions
@@ -140,7 +142,7 @@ class WNO(Module):
         n_layers: int = 4,
         levels: int = 2,
         padding: int = 8,
-        norm: str | None = UNSET,
+        norm: NormArg = UNSET,
     ) -> None:
         super().__init__(meta=self._meta)
         norm = resolve_norm(norm, "WNO")

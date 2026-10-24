@@ -4,7 +4,7 @@
 """Hyperparameter tuning wrapper around Optuna."""
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 
 class HyperparameterTuner:
@@ -26,7 +26,7 @@ class HyperparameterTuner:
     def __init__(
         self,
         n_trials: int = 50,
-        direction: str = "minimize",
+        direction: Literal["minimize", "maximize"] = "minimize",
         study_name: str | None = None,
         use_hyperband: bool = True,
     ) -> None:

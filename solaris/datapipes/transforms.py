@@ -55,13 +55,14 @@ class RandomCrop2d:
 
     def __call__(self, sample: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         # Determine crop coordinates from first matching key
-        h = w = None
+        h: int | None = None
+        w: int | None = None
         for k in self.keys:
             if k in sample:
                 t = sample[k]
                 h, w = t.shape[-2], t.shape[-1]
                 break
-        if h is None:
+        if h is None or w is None:
             return sample
         if h < self.crop_h or w < self.crop_w:
             raise ValueError(f"cannot crop {(self.crop_h, self.crop_w)} from a {(h, w)} field")

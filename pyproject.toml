@@ -89,3 +89,9 @@ filterwarnings = [
     # Older tests deliberately exercise the legacy norm default
     "ignore:.*norm was not specified:solaris.exceptions.FutureFeatureWarning",
 ]
+
+[tool.mypy]
+python_version = "3.10"
+packages = ["solaris"]
+ignore_missing_imports = true
+warn_unused_ignores = true

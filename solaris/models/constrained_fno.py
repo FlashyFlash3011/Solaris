@@ -47,7 +47,7 @@ from solaris.nn.constraints import (
     ConservationProjection,
     DivergenceFreeProjection2d,
 )
-from solaris.nn.norm import UNSET, resolve_norm
+from solaris.nn.norm import UNSET, NormArg, resolve_norm
 
 CONSTRAINTS = ("divergence_free", "conservative", "dirichlet", "nonnegative", "none")
 
@@ -92,7 +92,7 @@ class ConstrainedFNO(Module):
         constraint: str = "divergence_free",
         boundary_value: float | None = None,
         conservation_mode: str | None = None,
-        norm: str | None = UNSET,
+        norm: NormArg = UNSET,
     ) -> None:
         super().__init__(meta=self._meta)
         norm = resolve_norm(norm, "ConstrainedFNO")

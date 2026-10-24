@@ -10,6 +10,8 @@ import torch.nn as nn
 
 
 class FourierEmbedding(nn.Module):
+    B: torch.Tensor
+
     """Random Fourier features for coordinate-based networks.
 
     Maps input coordinates to a higher-dimensional space using random
@@ -46,6 +48,8 @@ class FourierEmbedding(nn.Module):
 
 
 class PositionalEmbedding(nn.Module):
+    pe: torch.Tensor
+
     """Sinusoidal positional embedding (Vaswani et al., 2017).
 
     Parameters

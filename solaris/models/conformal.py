@@ -41,6 +41,9 @@ import torch.nn as nn
 
 
 class ConformalNeuralOperator(nn.Module):
+    _q_hat: torch.Tensor
+    _calibrated_buf: torch.Tensor
+
     """Conformal prediction wrapper for any neural operator.
 
     Usage
@@ -98,16 +101,16 @@ class ConformalNeuralOperator(nn.Module):
         self.model.eval()
         device = next(self.model.parameters()).device
 
-        scores = []
+        score_list: list[torch.Tensor] = []
         for i in range(0, len(cal_inputs), batch_size):
             x_b = cal_inputs[i : i + batch_size].to(device)
             y_b = cal_targets[i : i + batch_size].to(device)
             pred = self.model(x_b)
             # Nonconformity score: worst-case absolute error per sample
             score = (pred - y_b).abs().flatten(1).max(dim=1).values
-            scores.append(score.cpu())
+            score_list.append(score.cpu())
 
-        scores = torch.cat(scores)  # (N,)
+        scores = torch.cat(score_list)  # (N,)
         n_cal = len(scores)
 
         # Split-conformal quantile: the ⌈(n+1)(1−α)⌉-th order statistic.

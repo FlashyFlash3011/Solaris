@@ -31,7 +31,7 @@ import torch.nn as nn
 
 from solaris.core.meta import ModelMetaData
 from solaris.core.module import Module
-from solaris.nn.norm import UNSET, make_norm, resolve_norm
+from solaris.nn.norm import UNSET, NormArg, make_norm, resolve_norm
 from solaris.nn.spectral import _pad_to, _stack_signed, complex_einsum
 
 
@@ -244,7 +244,7 @@ class MultiScaleFNO(Module):
         n_layers: int = 4,
         n_scales: int = 3,
         max_modes: int = 16,
-        norm: str | None = UNSET,
+        norm: NormArg = UNSET,
     ) -> None:
         super().__init__(meta=self._meta)
         norm = resolve_norm(norm, "MultiScaleFNO")

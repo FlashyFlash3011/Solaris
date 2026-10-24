@@ -30,7 +30,7 @@ import torch.nn as nn
 from solaris.core.meta import ModelMetaData
 from solaris.core.module import Module
 from solaris.models.fno import FNOBlock2d
-from solaris.nn.norm import UNSET, resolve_norm
+from solaris.nn.norm import UNSET, NormArg, resolve_norm
 
 
 class NeuralResidualCorrector(Module):
@@ -82,7 +82,7 @@ class NeuralResidualCorrector(Module):
         n_layers: int = 4,
         modes: int = 12,
         solver_detach: bool = True,
-        norm: str | None = UNSET,
+        norm: NormArg = UNSET,
     ) -> None:
         super().__init__(meta=self._meta)
         norm = resolve_norm(norm, "NeuralResidualCorrector")

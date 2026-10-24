@@ -75,8 +75,9 @@ def complex_einsum(equation: str, x: torch.Tensor, w: torch.Tensor) -> torch.Ten
 
 
 def _resolve_tp_group(layer: nn.Module) -> dist.ProcessGroup | None:
-    if layer._tp_group is not None:
-        return layer._tp_group
+    explicit: dist.ProcessGroup | None = getattr(layer, "_tp_group", None)
+    if explicit is not None:
+        return explicit
     try:
         from solaris.distributed import DistributedManager
 
@@ -181,7 +182,7 @@ class SpectralConv2d(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.distributed:
             group = self._tp_group_resolved()
-            if _is_multi_rank(group):
+            if group is not None and _is_multi_rank(group):
                 return self._forward_distributed(x, group)
 
         bsz, _, nx, ny = x.shape

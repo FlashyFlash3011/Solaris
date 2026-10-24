@@ -6,11 +6,14 @@
 from __future__ import annotations
 
 import math
+from collections import defaultdict
 from collections.abc import Callable
 from typing import Any
 
 import torch
 import torch.nn as nn
+
+from solaris.core.module import Module
 
 
 class EarlyStopping:
@@ -232,7 +235,7 @@ class AutoCheckpoint:
         if improved:
             self._best = metric
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            if hasattr(model, "save"):
+            if isinstance(model, Module):
                 model.save(self.path)
             else:
                 torch.save(model.state_dict(), self.path)
@@ -283,7 +286,7 @@ class CombinedOptimizer(torch.optim.Optimizer):
         # Bypass torch.optim.Optimizer.__init__ (which expects raw params).
         # We set the required attributes manually.
         self.param_groups = all_param_groups
-        self.state: dict = {}
+        self.state = defaultdict(dict)  # sub-optimisers hold the real state
         self.defaults: dict = {}
 
     def zero_grad(self, set_to_none: bool = True) -> None:
@@ -463,6 +466,8 @@ class StaticCaptureTraining:
                 self.optimizer.zero_grad(set_to_none=True)
                 return self._run_step(x, y)
 
+        assert self._static_x is not None and self._static_y is not None
+        assert self._static_loss is not None
         self._static_x.copy_(x)
         self._static_y.copy_(y)
         self._graph.replay()

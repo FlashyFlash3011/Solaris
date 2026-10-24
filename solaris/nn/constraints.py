@@ -267,10 +267,10 @@ class NeumannBCLayer(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x.clone()
         for d in self.dims:
-            idx_first = [slice(None)] * x.ndim
-            idx_second = [slice(None)] * x.ndim
-            idx_last = [slice(None)] * x.ndim
-            idx_second_last = [slice(None)] * x.ndim
+            idx_first: list[slice | int] = [slice(None)] * x.ndim
+            idx_second: list[slice | int] = [slice(None)] * x.ndim
+            idx_last: list[slice | int] = [slice(None)] * x.ndim
+            idx_second_last: list[slice | int] = [slice(None)] * x.ndim
 
             idx_first[d] = 0
             idx_second[d] = 1
@@ -283,6 +283,8 @@ class NeumannBCLayer(nn.Module):
 
 
 class DirichletBCLayer(nn.Module):
+    boundary_values: torch.Tensor
+
     """Enforce Dirichlet boundary conditions by overwriting border pixels.
 
     The interior of the field is left unchanged; only the outermost pixels
@@ -302,7 +304,7 @@ class DirichletBCLayer(nn.Module):
         self,
         spatial_shape: tuple,
         channels: int,
-        boundary_values: torch.Tensor = None,
+        boundary_values: torch.Tensor | None = None,
     ) -> None:
         super().__init__()
         H, W = spatial_shape

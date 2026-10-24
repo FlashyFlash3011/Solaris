@@ -32,8 +32,11 @@ class _Unset:
 
 UNSET = _Unset()
 
+#: Type of the ``norm`` argument accepted by FNO-family models.
+NormArg = str | None | _Unset
 
-def resolve_norm(norm, model_name: str):
+
+def resolve_norm(norm: NormArg, model_name: str) -> str | None:
     """Validate ``norm``; map the unset default to ``"instance"`` with a warning."""
     if norm is UNSET:
         warnings.warn(

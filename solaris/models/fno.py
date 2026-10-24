@@ -9,7 +9,7 @@ from torch.utils.checkpoint import checkpoint as grad_checkpoint
 
 from solaris.core.meta import ModelMetaData
 from solaris.core.module import Module
-from solaris.nn.norm import UNSET, make_norm, resolve_norm
+from solaris.nn.norm import UNSET, NormArg, make_norm, resolve_norm
 from solaris.nn.spectral import SpectralConv1d, SpectralConv2d, SpectralConv3d
 
 
@@ -103,7 +103,7 @@ class FNO(Module):
         gradient_checkpointing: bool = False,
         compile: bool = False,
         compile_mode: str = "reduce-overhead",
-        norm: str | None = UNSET,
+        norm: NormArg = UNSET,
     ) -> None:
         super().__init__(meta=self._meta)
         norm = resolve_norm(norm, "FNO")
@@ -164,20 +164,12 @@ class FNO(Module):
         """
         for block in self.blocks:
             sc = block.spectral
-            # 1-D: SpectralConv1d uses `weights` (no suffix)
-            # 2-D/3-D: SpectralConv2d/3d use `weights1`, `weights2`, ...
-            if hasattr(sc, "weights1"):
-                w_ref = sc.weights1
-            elif hasattr(sc, "weights"):
-                w_ref = sc.weights
-            else:
-                continue
-            if hasattr(sc, "modes_x"):
-                sc.modes_x = min(new_modes, w_ref.shape[2])
-            if hasattr(sc, "modes_y"):
-                sc.modes_y = min(new_modes, w_ref.shape[3])
-            if hasattr(sc, "modes_z"):
-                sc.modes_z = min(new_modes, w_ref.shape[4])
+            # 1-D: SpectralConv1d uses `weights`; 2-D/3-D use `weights1`, ...
+            w_ref = getattr(sc, "weights1" if hasattr(sc, "weights1") else "weights")
+            assert isinstance(w_ref, torch.Tensor)
+            for i, attr in enumerate(("modes_x", "modes_y", "modes_z")):
+                if hasattr(sc, attr):
+                    setattr(sc, attr, min(new_modes, w_ref.shape[2 + i]))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.lift(x)

@@ -9,7 +9,7 @@ equivalent), but PyTorch exposes it via the same ``"nccl"`` backend name.
 """
 
 import os
-from typing import Optional
+from typing import Any, Optional
 
 import torch
 import torch.distributed as dist
@@ -37,11 +37,18 @@ class DistributedManager:
 
     _instance: Optional["DistributedManager"] = None
     _initialized: bool = False
+    _named_groups: dict[str, dist.ProcessGroup]
+    _mesh: Any
+    _rank: int
+    _world_size: int
+    _local_rank: int
+    _device: torch.device
+    _backend: str
 
     def __new__(cls) -> "DistributedManager":
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-            cls._instance._named_groups: dict[str, dist.ProcessGroup] = {}
+            cls._instance._named_groups = {}
             cls._instance._mesh = None
         return cls._instance
 

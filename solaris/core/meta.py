@@ -66,4 +66,4 @@ def _nvp_tags(self: ModelMetaData) -> list[str]:
 
 # Read-only alias for code written against the old field name.  Assigned after
 # the dataclass is built, so the generated __init__ still takes nvp_tags=None.
-ModelMetaData.nvp_tags = property(_nvp_tags)  # type: ignore[assignment]
+ModelMetaData.nvp_tags = property(_nvp_tags)  # type: ignore[attr-defined]

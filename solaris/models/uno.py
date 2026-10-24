@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from solaris.core.meta import ModelMetaData
 from solaris.core.module import Module
 from solaris.models.fno import FNOBlock2d
-from solaris.nn.norm import UNSET, resolve_norm
+from solaris.nn.norm import UNSET, NormArg, resolve_norm
 
 
 class UNO(Module):
@@ -50,7 +50,7 @@ class UNO(Module):
         n_levels: int = 3,
         modes: int = 12,
         channel_multiplier: int = 2,
-        norm: str | None = UNSET,
+        norm: NormArg = UNSET,
     ) -> None:
         super().__init__(meta=self._meta)
         norm = resolve_norm(norm, "UNO")

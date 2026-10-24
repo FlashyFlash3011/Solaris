@@ -79,5 +79,6 @@ def cached_arrays(
 
     data = {k: np.asarray(v) for k, v in generate().items()}
     path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(path, **data, **{_CONFIG_KEY: np.array(wanted)})
+    to_save: dict[str, Any] = {**data, _CONFIG_KEY: np.array(wanted)}
+    np.savez_compressed(path, **to_save)
     return data
