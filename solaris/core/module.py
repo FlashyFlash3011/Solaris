@@ -248,9 +248,7 @@ class Module(nn.Module):
         Module
             ``self`` (for chaining).
         """
-        self.forward = torch.compile(  # type: ignore[method-assign]
-            self.forward, mode=mode, fullgraph=fullgraph, **kwargs
-        )
+        self.forward = torch.compile(self.forward, mode=mode, fullgraph=fullgraph, **kwargs)
         return self
 
     def num_parameters(self) -> int:
