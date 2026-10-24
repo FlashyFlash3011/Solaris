@@ -1,16 +1,26 @@
 # projects/
 
-End-to-end demo projects. Each has its own data generator, traditional solver, neural surrogate, and comparison script.
+End-to-end demo projects. Each has a traditional solver that generates the
+training data (and the ground truth), a training script for the neural
+surrogate, and a script that compares the two.
 
-| Project | Physics problem | Model used |
+| Project | Physics problem | Models |
 |---|---|---|
-| `chip_thermal/` | Steady-state 2D heat conduction — predict chip temperature from power map | FNO, ConstrainedFNO, NeuralResidualCorrector |
-| `water_heat_diffusion/` | Time-evolving 2D heat diffusion in a microfluidics channel | Time-conditioned FNO |
-| `weather_forecast/` | Multi-day atmospheric pressure and temperature forecasting | AFNO |
-| `hurricane_flood/` | 24-hour hurricane storm surge — mass-conserving flood depth + divergence-free wind with calibrated uncertainty | CoupledOperator (ConstrainedFNO × 2) + ConformalNeuralOperator |
+| `chip_thermal/` | Steady 2-D heat conduction: chip temperature from its power map | FNO, ConstrainedFNO (fixed 40 °C boundary), NeuralResidualCorrector, conformal intervals |
+| `hurricane_flood/` | 24-hour storm surge (linear shallow-water equations) | CoupledOperator (flood + wind), flood depth ≥ 0 and = 0 over ocean, conformal intervals on held-out storms |
+| `navier_stokes/` | 2-D incompressible flow (vorticity form), periodic | FNO |
+| `wave_equation/` | 2-D wave propagation | time-conditioned FNO |
+| `water_heat_diffusion/` | Time-dependent 2-D heat diffusion | time-conditioned FNO |
+| `weather_forecast/` | Toy atmospheric advection, multi-day forecasts | AFNO |
 
 Each project folder contains:
-- `solver.py` — traditional finite-difference solver (ground truth)
-- `train.py` — train the neural surrogate
-- `compare.py` — benchmark neural vs solver (speed + accuracy)
-- `benchmark.py` — full head-to-head comparison of all methods (chip_thermal only)
+- `solver.py` (or `data_gen.py`) — traditional solver, used as ground truth
+- `train.py` — trains the surrogate; datasets are cached keyed by their
+  generation settings, and train/validation splits are by whole simulation
+- `compare.py` — surrogate vs solver: accuracy and speed
+- chip_thermal also has `calibrate.py` (conformal intervals); the
+  repository-level `benchmarks/chip_thermal.py` evaluates all its models
+
+Install what the demos need with `pip install -e ".[demos]"`. Every project's
+train → compare pipeline runs in CI with tiny settings
+(`tests/test_projects_smoke.py`).

@@ -10,23 +10,33 @@ coastal domain.  A traditional shallow water equations (SWE) solver provides
 ground truth.  A neural surrogate trained once predicts the same scenario in
 milliseconds — and comes with a provable uncertainty guarantee.
 
-**Physical guarantees baked into the model:**
-- **Mass conservation** — the `conservative` constraint in `ConstrainedFNO` ensures
-  the total water volume is never created or destroyed by the network.
-- **Divergence-free wind** — the `divergence_free` constraint ensures the predicted
-  wind field contains no spurious convergence zones that would falsely pump water.
-- **90% coverage uncertainty** — `ConformalNeuralOperator` wraps the flood predictor
-  and guarantees that the true flood depth falls within `[pred ± q̂]` on at least
-  90% of test cases, with no distributional assumptions.
+**Guarantees built into the model (hold for any weights, also after coupling):**
+- **Flood depth is never negative** — the flood operator ends in a
+  non-negative output (`ConstrainedFNO(constraint="nonnegative")`).
+- **No flooding over open ocean** — the output is multiplied by the land mask
+  (an input channel), so ocean cells are exactly 0, as in the solver.
+- **Calibrated uncertainty** — `ConformalNeuralOperator` is calibrated on
+  storms the model never trained on; coverage is then measured on a further
+  set of held-out storms. The guarantee: for a new storm from the same
+  distribution, the true depth lies inside `[prediction ± q̂]` everywhere on
+  the map with probability ≥ 90 %.
+
+What is deliberately *not* enforced: flood volume is not conserved between
+time steps (water rises and drains), and the wind is not divergence-free (the
+simulated storm spirals inward), so neither is imposed as a constraint.
+
+Data are split **by storm** (70 / 10 / 10 / 10 % train / validation /
+calibration / test) so no storm's time steps appear in two splits, and
+normalisation statistics come from the training storms only.
 
 ## Models used
 
 | Component | Model | Constraint |
 |-----------|-------|-----------|
-| Flood depth | `ConstrainedFNO` | `"conservative"` |
-| Wind field | `ConstrainedFNO` | `"divergence_free"` |
-| Coupling | `CoupledOperator` | `coupling_mode="learned"` |
-| Uncertainty | `ConformalNeuralOperator` | split-conformal, α=0.1 |
+| Flood depth | `FloodOperator` (`ConstrainedFNO` × land mask) | depth ≥ 0, depth = 0 on ocean |
+| Wind field | `FNO` | none |
+| Coupling | `CoupledOperator` | `coupling_mode="learned"` (re-applies the flood constraints) |
+| Uncertainty | `ConformalNeuralOperator` | split-conformal, α = 0.1 |
 
 ## Physics
 
@@ -48,7 +58,7 @@ time-stepping on a 64×64 km coastal grid (1 km/cell, dt=20 s).
 # 1. Smoke-test the solver (saves results/solver_demo.png)
 python solver.py
 
-# 2. Train the surrogate (quick CPU test)
+# 2. Train the surrogate (quick CPU test; needs >= 10 storms for the 4-way split)
 python train.py --n_sims 20 --epochs 5
 
 # 3. Full training run
@@ -77,7 +87,7 @@ python visualize.py --generate --solver-only --interactive
 | `results/hurricane_flood.gif` | Animated 2×2 visualization |
 | `checkpoints/best_coupled.pt` | Trained CoupledOperator weights |
 | `checkpoints/conformal_predictor.pt` | ConformalNeuralOperator with calibrated q̂ |
-| `checkpoints/norm_stats.npz` | Normalisation statistics |
+| `checkpoints/norm_stats.npz` | Normalisation statistics (training storms only) |
 
 ## Visualization panels
 
