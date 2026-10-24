@@ -1,160 +1,89 @@
-# Chip Thermal — FNO Surrogate for 2-D Steady-State Heat Conduction
+# Chip Thermal — neural surrogates for steady-state chip temperature
 
-![Three-way comparison: FD solver vs Pre-DP FNO vs Post-DP residual corrector](assets/compare.png)
+![FD solver vs FNO on a new chip layout](assets/compare.png)
 
-Predict the steady-state temperature field on a chip given its power-density map:
+Predict the steady-state temperature of a chip from its power-density map:
 
 ```
--∇²T = Q(x,y)    on [0,1]²
-T = T_ambient     on boundary  (isothermal package)
+-∇²T = Q(x, y)    on [0, 1]²
+T = 40 °C         on the boundary (isothermal package)
 ```
 
-The FNO learns this mapping from (Q → T) in ~1% rel-L2 error, then evaluates
-**1 000 new chip layouts** in milliseconds instead of ~50 seconds.
+Ground truth comes from a sparse finite-difference solve (`solver.py`, scipy
+LU). Three surrogates are trained on 1 000 solved layouts and evaluated on
+1 000 new ones:
 
-Now extended with **Dynamic Programming** techniques across training, architecture,
-inference, and uncertainty quantification — achieving ~3.5× lower error with the
-`residual` model variant.
+| Variant (`--model`) | What it is |
+|---|---|
+| `fno` | plain Fourier Neural Operator |
+| `constrained` | `ConstrainedFNO(constraint="dirichlet")`: the 40 °C package boundary holds **exactly**, for any weights |
+| `residual` | `NeuralResidualCorrector`: a coarse FD solve on a 4× coarser grid does the bulk of the physics; the network learns only its error |
 
----
+## Results
+
+| Model | Error on the rise (mean / worst) | Worst error | Boundary deviation | Time per layout | vs FD solver |
+|---|---|---|---|---|---|
+| FNO | 0.074% / 0.76% | 0.55 °C | 0.41 °C | 1.6 ms | 16× faster |
+| Constrained FNO (exact 40 °C boundary) | 0.074% / 0.74% | 0.57 °C | **0 (exact)** | 1.4 ms | 18× faster |
+| Residual corrector (coarse FD + FNO) | 0.012% / 0.07% | 0.08 °C | 0.08 °C | 2.7 ms | 9× faster |
+
+FD solver: 25.4 ms per layout (scipy sparse LU, CPU). Models: batched on an AMD Radeon RX 9070 XT (ROCm 7.2, WSL2), including host↔device copies. All models: width 64, 4 layers, 16 modes, 200 epochs, `norm=None`.
+
+**Calibrated error bars (FNO):** calibrated on 500 fresh layouts, the conformal intervals are ±0.14 °C and contained the true temperature at every pixel for 88.9 % of 1 000 further layouts (target 90 %; a single run is expected to land within about ±1.6 points of 90.2 % — the average is verified by a 400-run statistical test).
 
 ## Dataset
 
-Generated on-the-fly by the scipy sparse FD solver in `solver.py`.
-
 | Property | Value |
 |---|---|
-| Source | scipy sparse FD (vectorised Laplacian, direct LU) |
+| Source | scipy sparse FD (5-point Laplacian, direct LU) |
 | Resolution | 128 × 128 |
-| Samples | 1 000 train + 200 test |
-| Temperature range | 40–93 °C (calibrated to real junction temps) |
-| Time per sample | ~50 ms on CPU |
-| Total generation time | ~1 min |
+| Samples | 1 000 train + 200 validation (+ fresh layouts for evaluation) |
+| Temperature range | 40–93 °C |
+| Floorplan | 4 compute cores with L2 shells, L3 cache band, 2 memory controllers, I/O ring — each with random utilisation |
 
-Chip floorplan: 4 compute cores (with L2 cache shells), L3 cache band, 2 memory
-controllers, and an I/O ring — each with randomised utilisation so the model sees
-diverse thermal profiles.
-
----
+The dataset file is named after its settings (`data/chip_thermal_<n_train>_<n_val>_<H>x<W>_seed0.npz`),
+so changing `--resolution` or `--n_train` never silently reuses stale data.
 
 ## Quickstart
 
 ```bash
 cd projects/chip_thermal
 
-# Step 1 — train baseline FNO
-python train.py --device cuda
+python train.py --device cuda                      # FNO
+python train.py --device cuda --model constrained  # exact boundary condition
+python train.py --device cuda --model residual     # coarse solver + correction
 
-# Step 2 — batch throughput comparison (1 000 new layouts)
-python compare.py --device cuda
-# → results/compare.png
+python compare.py --device cuda                    # speed + accuracy on 1 000 new layouts
+python calibrate.py --device cuda --model fno      # conformal error bars
+
+# all three models side by side
+python ../../benchmarks/chip_thermal.py --checkpoint_dir checkpoints
 ```
 
-### CPU-only smoke-test
+CPU smoke test: `python train.py --device cpu --n_train 200 --epochs 20 --resolution 64`.
 
-```bash
-python train.py --device cpu --n_train 200 --epochs 20
-python compare.py --device cpu --n_batch 50
-```
+## Uncertainty (conformal prediction)
 
-### Smoke-test the solver alone
+`calibrate.py` wraps a trained model in `ConformalNeuralOperator`, calibrates
+it on freshly generated random layouts and checks coverage on a further set of
+new layouts. The guarantee: for a new layout from the same distribution, the
+true temperature lies inside `[prediction ± q̂]` at **every pixel** with
+probability ≥ 1 − α.
 
-```bash
-python solver.py
-```
+Measured with the FNO: calibration on 500 random layouts gives q̂ = 0.14 °C; coverage on 1 000 further layouts is 88.9 % (target 90 %, within normal run-to-run spread).
 
----
-
-## DP-Enhanced Training
-
-Three model variants are available via `--model`:
-
-| Variant | Description | Typical rel-L2 |
-|---|---|---|
-| `fno` (default) | Plain Fourier Neural Operator | ~0.88% |
-| `constrained` | ConstrainedFNO with global heat conservation enforced | ~0.80% |
-| `residual` | NeuralResidualCorrector: coarse FD + neural correction | ~0.25% |
-
-```bash
-# Physics-constrained FNO (conservation law hard-enforced at architecture level)
-python train.py --model constrained --device cuda
-
-# Neural residual corrector — learns only the correction over a coarse FD solve
-python train.py --model residual --device cuda
-```
-
-### DP training flags
-
-| Flag | What it does |
-|---|---|
-| `--curriculum` | Mode curriculum: start at 4 Fourier modes, unlock +4 every 30 epochs |
-| `--grad_ckpt` | Gradient checkpointing — trades recomputation for VRAM (deep stacks) |
-| `--tune` | Hyperband hyperparameter search before full training |
-| `--tune_trials` | Number of Optuna trials (default 20) |
-| `--profile_modes` | Knapsack DP to find optimal Fourier mode count before training |
-
-All variants use `WarmupCosineScheduler` + `EarlyStopping` + `GradientClipper` by default.
-
-### Three-way comparison
-
-```bash
-# After training both fno and residual models:
-python compare_dp.py --device cuda
-# → results/compare_dp.png
-#   Row 0: Power Map | FD Ground Truth | Pre-DP FNO | Post-DP Residual
-#   Row 1: Stats     | (reference)     | Pre-DP err | Post-DP err
-```
-
-### Uncertainty quantification
-
-```bash
-python calibrate.py --model residual --device cuda
-# Wraps model in ConformalNeuralOperator
-# DP knapsack selects optimal calibration subset (~150 of 500 generated samples)
-# Guarantees P(T_true ∈ [T_low, T_high]) ≥ 90%
-# → results/calibrate_residual.png
-```
-
-### DP rollout policy
-
-`dp_policy.py` contains `DPRolloutPolicy` — at inference time it decides whether
-to run the expensive FD coarse solver or trust the neural correction alone, reducing
-FD calls by 60–80% with negligible accuracy loss. Pass `--dp_policy` to `compare_dp.py`.
-
----
-
-## Expected output
-
-```
-============================================================
-  Batch size        : 1000 chip layouts
-  FD Solver  total  : 49.3s  (49.3 ms/layout)
-  FNO        total  : 521ms  (0.52 ms/layout)
-  Speedup           : 95×
-  Rel-L2 avg        : 0.0088  (max 0.0151)
-============================================================
-```
-
-`results/compare.png` — 4-panel figure (power map, FD temp, FNO temp, error)
-
-`results/compare_dp.png` — 8-panel three-way figure (2 rows × 4 columns)
-
----
-
-## All flags
+## Training options
 
 | Flag | Default | Notes |
 |---|---|---|
 | `--model` | `fno` | `fno` / `constrained` / `residual` |
-| `--n_train` | 1000 | Training samples |
-| `--epochs` | 200 | More epochs → lower rel-L2 |
-| `--hidden` | 64 | FNO hidden channel width |
-| `--modes` | 16 | Fourier modes kept per dimension |
-| `--n_layers` | 4 | FNO depth |
-| `--resolution` | 128 | Grid resolution |
-| `--curriculum` | off | DP mode curriculum |
-| `--grad_ckpt` | off | Gradient checkpointing |
-| `--tune` | off | Hyperband hyperparameter search |
-| `--profile_modes` | off | Knapsack mode profiling |
-| `--n_batch` | 1000 | Compare: layouts in batch test |
-| `--batch_size` | 64 | Compare: GPU inference batch size |
+| `--norm` | `none` | normalisation inside Fourier blocks (`none` = reference FNO, `instance` = legacy) |
+| `--epochs` | 200 | cosine schedule with warm-up over this many epochs |
+| `--patience` | 0 (off) | early stopping; off by default because it would cut the cosine schedule short — the best checkpoint is kept either way |
+| `--hidden`, `--n_layers`, `--modes` | 64, 4, 16 | FNO width, depth, Fourier modes |
+| `--resolution`, `--n_train`, `--n_val` | 128, 1000, 200 | dataset |
+| `--data` | auto | dataset file to use/create |
+| `--curriculum` | off | start with 4 Fourier modes, unlock 4 more every 30 epochs |
+| `--mode_sweep` | off | short trainings at several mode counts; train with the smallest within 2 % of the best |
+| `--tune`, `--tune_trials` | off, 20 | Optuna search with Hyperband pruning (trial checkpoints go to `checkpoints/tuning/`) |
+| `--grad_ckpt` | off | gradient checkpointing (less GPU memory) |

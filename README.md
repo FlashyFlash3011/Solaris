@@ -2,180 +2,221 @@
 
 [![Tests](https://github.com/FlashyFlash3011/Solaris/actions/workflows/tests.yml/badge.svg)](https://github.com/FlashyFlash3011/Solaris/actions/workflows/tests.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
+[![Python 3.10–3.12](https://img.shields.io/badge/python-3.10%E2%80%933.12-blue.svg)](pyproject.toml)
 
-A physics AI framework for AMD GPUs, based on the architecture of [NVIDIA PhysicsNeMo](https://github.com/NVIDIA/physicsnemo).
+**Neural operators for physics simulation, on AMD GPUs.**
 
-Runs on AMD GPUs via PyTorch's ROCm/HIP backend.  The `torch.cuda.*` API is identical whether you run ROCm or CUDA — PyTorch handles the translation transparently.  Distributed collectives go through **RCCL** (AMD's NCCL equivalent), exposed via PyTorch's `"nccl"` backend name.
+Classical PDE solvers are accurate but slow: every new design or boundary
+condition means solving from scratch. Solaris trains neural networks on solved
+examples so new cases can be predicted in milliseconds — and adds the things
+you need to trust those predictions: physics laws enforced exactly, error bars
+with a statistical guarantee, and a way to fall back on a cheap solver for the
+part a network gets wrong.
 
-## TL;DR
+It runs on AMD GPUs through PyTorch's ROCm backend (and unchanged on NVIDIA
+GPUs or CPU). Its design follows [NVIDIA PhysicsNeMo](https://github.com/NVIDIA/physicsnemo).
 
-Traditional physics simulators are accurate but slow — they grind through thousands of calculation steps every time you change a design. Solaris trains neural networks on solved simulation examples so they can predict new results **instantly**, without re-running the solver from scratch.
+> **Status: 0.2 — research-grade library.** The core models and utilities are
+> tested (unit, multi-process and end-to-end tests), but the API may still
+> change. See [CHANGELOG.md](CHANGELOG.md) and [Known limitations](#known-limitations).
 
-On a chip thermal design problem: **5× faster than the simulator across 1000 layouts, 0.05% error, runs on AMD GPUs.**
+---
 
-Five original research contributions on top of the standard approach:
-- **Hard physics constraints** — the network mathematically cannot output results that break physics laws
-- **Residual correction** — runs a quick coarse simulation first, then uses the network only to fix its mistakes
-- **Multi-scale attention** — separate specialist "heads" for large-scale patterns and fine details
-- **Calibrated uncertainty** — gives guaranteed confidence intervals, not just a single number
-- **Multi-physics coupling** — multiple networks (heat, fluid, structure) that talk to each other
+## What's in the box
 
-Built for AMD GPUs (RDNA2 through RDNA4, CDNA1 through CDNA3). Drop-in compatible with NVIDIA CUDA via the same `torch.cuda` API.
-
-> **Note:** Demo projects use a **finite-difference solver written from scratch** to generate training data — not commercial simulation software (e.g. ANSYS, COMSOL). The chip thermal dataset is produced by the scipy sparse FD solver with a realistic quad-core floorplan (randomised per-core utilisation, L3 cache, memory controllers, I/O ring), calibrated to a 40–93 °C junction-temperature range. The physics and geometry are representative of real chip designs; the workload patterns are procedurally varied to cover a wide training distribution.
+| Feature | What it gives you | How it is verified |
+|---|---|---|
+| **Neural operators** — FNO (1-D/2-D/3-D), AFNO, UNO, WNO, DeepONet, MeshGraphNet, MLP | Learn solution operators of PDEs; resolution-flexible spectral models | unit tests per model |
+| **Hard physics constraints** — `ConstrainedFNO` | Outputs that are divergence-free, conservative, satisfy a Dirichlet boundary value, or are non-negative — exactly, for any weights | tests check each law to float precision, including after multi-physics coupling |
+| **Residual correction** — `NeuralResidualCorrector` | A cheap, unconverged solver does the bulk of the physics; the network learns only its error | chip-thermal benchmark below |
+| **Calibrated uncertainty** — `ConformalNeuralOperator` | Error bands with a finite-sample coverage guarantee, for any trained model | statistical test over 400 draws; 90.2 % coverage on 1 000 unseen chip layouts (target 90 %) |
+| **Multi-physics coupling** — `CoupledOperator` | Several operators that exchange information, starting from the uncoupled solution | tests; hurricane demo |
+| **Multi-scale FNO** — `MultiScaleFNO` | Separate spectral heads for low/mid/high frequency bands that mean the same thing at every resolution | tests |
+| **Multi-GPU** | Data-parallel training example (`torchrun`), tensor-parallel 2-D spectral convolution, sharded (FSDP) checkpoints | 2-process tests compare against single-process results |
+| **Training utilities** | `WarmupCosineScheduler`, HIP/CUDA graph capture (`StaticCaptureTraining`), early stopping, gradient clipping, Optuna tuning, W&B logging, safe checkpoints | tests; graph-capture speed-up measured in `benchmarks/` |
+| **Export** | ONNX export of FNO-family models, AFNO and MLPs | onnxruntime reproduces PyTorch outputs |
 
 ---
 
 ## Results
 
-**Chip thermal simulation** — power map → temperature field
+### Chip thermal: power map → steady-state temperature
 
-![Chip Thermal Benchmark](assets/compare.png)
+1 000 fresh 128 × 128 chip layouts that no model saw during training; ground
+truth from a sparse finite-difference solve (scipy, CPU). "Error on the rise"
+is relative to the temperature rise above the 40 °C package boundary — the
+part the model actually has to predict.
 
-> Power map with chip architecture labels → FD solver temperature → FNO prediction → absolute error. 1000 new layouts: FD solver 25s total vs FNO 4.9s total (**5× speedup**), avg rel-L2 **0.05%**.
+| Model | Error on the rise (mean / worst) | Worst error | Boundary deviation | Time per layout | vs FD solver |
+|---|---|---|---|---|---|
+| FNO | 0.074% / 0.76% | 0.55 °C | 0.41 °C | 1.6 ms | 16× faster |
+| Constrained FNO (exact 40 °C boundary) | 0.074% / 0.74% | 0.57 °C | **0 (exact)** | 1.4 ms | 18× faster |
+| Residual corrector (coarse FD + FNO) | 0.012% / 0.07% | 0.08 °C | 0.08 °C | 2.7 ms | 9× faster |
 
-**Water heat diffusion** — time-evolving temperature field
+FD solver: 25.4 ms per layout (scipy sparse LU, CPU). Models: batched on an AMD Radeon RX 9070 XT (ROCm 7.2, WSL2), including host↔device copies. All models: width 64, 4 layers, 16 modes, 200 epochs, `norm=None`.
 
-![Water Heat Diffusion](assets/water_heat_diffusion.png)
+**Calibrated error bars (FNO):** calibrated on 500 fresh layouts, the conformal intervals are ±0.14 °C and contained the true temperature at every pixel for 88.9 % of 1 000 further layouts (target 90 %; a single run is expected to land within about ±1.6 points of 90.2 % — the average is verified by a 400-run statistical test).
 
-**Weather forecasting** — multi-day atmospheric prediction
+Reproduce: `python projects/chip_thermal/train.py --model {fno,constrained,residual} --norm none`,
+then `python benchmarks/chip_thermal.py --checkpoint_dir projects/chip_thermal/checkpoints`.
 
-![Weather Forecast](assets/weather_forecast.png)
+### Other demos
+
+| Project | Physics | What it shows |
+|---|---|---|
+| [`chip_thermal`](projects/chip_thermal) | steady 2-D heat conduction | FNO vs boundary-constrained FNO vs residual corrector; conformal error bars |
+| [`hurricane_flood`](projects/hurricane_flood) | storm surge (shallow-water equations) | coupled flood + wind operators; flood depth ≥ 0 and = 0 over ocean, exactly; calibrated on held-out storms |
+| [`navier_stokes`](projects/navier_stokes) | 2-D vorticity | FNO time stepping |
+| [`wave_equation`](projects/wave_equation) | 2-D wave propagation | time-conditioned FNO |
+| [`water_heat_diffusion`](projects/water_heat_diffusion) | time-dependent heat diffusion | FNO queried at arbitrary times |
+| [`weather_forecast`](projects/weather_forecast) | toy atmospheric advection | AFNO multi-day forecasts |
+
+Every demo trains and evaluates end to end in CI (tiny settings).
 
 ---
 
-## Supported AMD GPU Architectures
+## Install
 
-| Architecture | GPUs |
-|---|---|
-| CDNA1 (gfx908) | MI100 |
-| CDNA2 (gfx90a) | MI200 series |
-| CDNA3 (gfx940/941/942) | MI300 series |
-| RDNA2 (gfx1030) | RX 6800/6900 XT |
-| RDNA3 (gfx1100) | RX 7900 XTX/XT |
-| RDNA4 (gfx1200) | RX 9070/9070 XT |
+Solaris needs PyTorch ≥ 2.4. **Install the right PyTorch build first** — Solaris
+itself only requires `torch`, `numpy` and `loguru`, so pip never replaces the
+PyTorch you installed.
 
----
-
-## Quick Start
-
-### 1. Install (CPU or ROCm GPU)
+**AMD GPU on Linux (native ROCm):** use the ROCm wheels from pytorch.org, e.g.
 
 ```bash
-# CPU-only (for development / testing without GPU)
-pip install torch --index-url https://download.pytorch.org/whl/cpu
-pip install -e ".[dev]"
-
-# ROCm 6.2 (AMD GPU)
 pip install torch --index-url https://download.pytorch.org/whl/rocm6.2
-pip install -e ".[dev]"
 ```
 
-### 2. Verify ROCm
+**AMD GPU under WSL2:** the pytorch.org ROCm wheels cannot see the GPU there
+(WSL exposes it as `/dev/dxg`, not `/dev/kfd`). Use AMD's WSL build from
+[repo.radeon.com](https://repo.radeon.com/rocm/manylinux/) on top of ROCm for
+WSL (tested: ROCm 7.2, `torch 2.9.1+rocm7.2`, Python 3.11).
+
+**NVIDIA GPU or CPU:** `pip install torch`.
+
+Then:
+
+```bash
+git clone https://github.com/FlashyFlash3011/Solaris.git && cd Solaris
+pip install -e ".[demos]"        # library + what the demo projects need
+```
+
+Extras: `demos` (scipy, matplotlib), `datapipes` (HDF5), `viz` (matplotlib),
+`tuning` (Optuna), `tracking` (Weights & Biases), `export` (ONNX), `dev`
+(tests, lint, type-check).
+
+Check the GPU is visible:
 
 ```python
-import torch, solaris
-print(solaris.get_gpu_backend())   # "rocm" on AMD, "cuda" on NVIDIA, "cpu" otherwise
-print(torch.cuda.is_available())       # True on ROCm
-print(torch.cuda.get_device_name(0))   # AMD GPU name
+import solaris, torch
+print(solaris.get_gpu_backend())        # "rocm", "cuda" or "cpu"
+print(torch.cuda.is_available())        # True on ROCm too (torch.cuda maps to HIP)
 ```
 
-### 3. Run an Example
-
-```bash
-# Synthetic Darcy flow with FNO (CPU)
-python examples/train_fno_darcy.py
-
-# Same on AMD GPU
-python examples/train_fno_darcy.py --device cuda
-
-# Poisson PINN (CPU)
-python examples/train_pinn_poisson.py
-
-# Poisson PINN on AMD GPU
-python examples/train_pinn_poisson.py --device cuda
-```
-
-### 4. Multi-GPU (RCCL)
-
-```bash
-torchrun --nproc_per_node=4 examples/train_fno_darcy.py --device cuda
-```
+**Docker (native Linux with ROCm only):** `docker build -f Dockerfile.rocm -t solaris .`
+(based on `rocm/pytorch` ROCm 7.2 / PyTorch 2.9.1; does not work under WSL2).
 
 ---
 
-## Docker (AMD GPU)
+## Quick start
 
-```bash
-# Build
-docker build -f Dockerfile.rocm -t solaris:latest .
+```python
+import torch
+from solaris.models import FNO
+from solaris.utils import WarmupCosineScheduler
 
-# Run — requires /dev/kfd, /dev/dri access
-docker run --rm -it \
-    --device=/dev/kfd --device=/dev/dri \
-    --group-add video --group-add render \
-    solaris:latest bash
+model = FNO(in_channels=1, out_channels=1, hidden_channels=32, n_layers=4,
+            modes=12, dim=2, norm=None).to("cuda")
+opt = torch.optim.AdamW(model.parameters(), lr=1e-3)
+sched = WarmupCosineScheduler(opt, warmup_epochs=5, total_epochs=100, base_lr=1e-3)
+
+x = torch.randn(8, 1, 64, 64, device="cuda")      # e.g. a source term
+y = torch.randn(8, 1, 64, 64, device="cuda")      # e.g. the solution field
+for epoch in range(100):
+    opt.zero_grad()
+    torch.nn.functional.mse_loss(model(x), y).backward()
+    opt.step()
+    sched.step()
+
+model.save("fno.pt")                               # self-describing checkpoint
+same = FNO.load("fno.pt")                          # rebuilt from the saved config
 ```
+
+Hard constraints and calibrated uncertainty:
+
+```python
+from solaris.models import ConstrainedFNO, ConformalNeuralOperator
+
+# temperature pinned to the boundary value on every edge, for any weights
+model = ConstrainedFNO(1, 1, constraint="dirichlet", boundary_value=0.0, norm=None)
+
+# after training: intervals that contain the truth for >= 90 % of new samples
+predictor = ConformalNeuralOperator(model)
+predictor.calibrate(cal_inputs, cal_targets, alpha=0.1)
+lower, upper, prediction = predictor.predict(new_inputs)
+```
+
+More: [`examples/`](examples) (standalone scripts, including data-parallel
+training with `torchrun --nproc_per_node=N examples/train_fno_darcy.py --device cuda`)
+and [`projects/`](projects) (complete solver + surrogate pipelines).
 
 ---
 
 ## Models
 
-| Model | Class | Description |
+| Model | Class | Notes |
 |---|---|---|
-| FNO | `solaris.models.FNO` | Fourier Neural Operator (1D/2D/3D) |
-| AFNO | `solaris.models.AFNO` | Adaptive Fourier Neural Operator |
-| MeshGraphNet | `solaris.models.MeshGraphNet` | Graph network for mesh-based simulations |
-| FullyConnected | `solaris.models.FullyConnected` | MLP for PINNs |
-| ConstrainedFNO | `solaris.models.ConstrainedFNO` | FNO with hard physics constraint enforcement |
-| MultiScaleFNO | `solaris.models.MultiScaleFNO` | Multi-frequency FNO with cross-scale attention |
-| NeuralResidualCorrector | `solaris.models.NeuralResidualCorrector` | Hybrid coarse solver + learned error correction |
-| ConformalNeuralOperator | `solaris.models.ConformalNeuralOperator` | Any model with guaranteed uncertainty intervals |
-| CoupledOperator | `solaris.models.CoupledOperator` | Multi-physics operator composition |
+| FNO | `solaris.models.FNO` | 1-D/2-D/3-D Fourier Neural Operator |
+| ConstrainedFNO | `solaris.models.ConstrainedFNO` | `constraint=` `"divergence_free"`, `"conservative"`, `"dirichlet"`, `"nonnegative"`, `"none"` |
+| NeuralResidualCorrector | `solaris.models.NeuralResidualCorrector` | coarse solver + learned correction |
+| MultiScaleFNO | `solaris.models.MultiScaleFNO` | per-band spectral heads + cross-scale attention |
+| UNO | `solaris.models.UNO` | U-Net with Fourier blocks at each scale |
+| WNO | `solaris.models.WNO` | Haar-wavelet neural operator (sharp fronts) |
+| AFNO | `solaris.models.AFNO` | adaptive Fourier token mixing (weather-style) |
+| DeepONet | `solaris.models.DeepONet` | branch/trunk operator network |
+| MeshGraphNet | `solaris.models.MeshGraphNet` | message passing on irregular meshes |
+| FullyConnected | `solaris.models.FullyConnected` | MLP / PINN baseline (incl. learnable Stan activation) |
+| CoupledOperator | `solaris.models.CoupledOperator` | multi-physics composition |
+| ConformalNeuralOperator | `solaris.models.ConformalNeuralOperator` | wraps any model with calibrated intervals |
+
+FNO-family models take `norm=None` (the reference FNO, recommended) or
+`norm="instance"` (the pre-0.2 default, which hides each sample's mean and
+scale from the network). Leaving it out keeps the old behaviour with a
+`FutureFeatureWarning`, so existing checkpoints load unchanged.
 
 ---
 
-## Projects Built on Solaris
+## Known limitations
 
-- **[plasma-gsfno](https://github.com/FlashyFlash3011/plasma-gsfno)** — Fourier Neural Operator surrogate for the **Grad–Shafranov** tokamak MHD equilibrium solve. Maps the coil/vacuum flux and pressure/current profiles → poloidal flux ψ(R,Z), replacing the iterative solver with sub-millisecond inference. Trained on 20k physics-validated FreeGS equilibria using `solaris.models.FNO`: **R² = 0.975, ~1.2 ms inference (~650× faster than the solve), ~9× more accurate than a trivial baseline.**
-
----
-
-## Architecture Overview
-
-```
-solaris/
-├── core/          # Module base class, ModelMetaData, ModelRegistry
-├── models/        # FNO, AFNO, MeshGraphNet, FullyConnected
-├── nn/            # Spectral convolutions, activations, embeddings
-├── distributed/   # ROCm-aware DistributedManager (RCCL backend)
-├── datapipes/     # Dataset, DataLoader, transforms
-├── utils/         # Checkpointing, logging
-└── metrics/       # relative_l2_error, rmse, nrmse, r2_score
-```
+- **Tested hardware:** AMD Radeon RX 9070 XT (RDNA4, `gfx1201`) under WSL2 with
+  ROCm 7.2, plus CPU. Other ROCm GPUs should work through the same PyTorch API
+  but have not been tested.
+- **`torch.compile` on the GPU** crashes in AMD's WSL build of PyTorch 2.9.1
+  (even for trivial functions) — a PyTorch issue; `Module.compile_model()`
+  works on CPU. HIP graph capture (`StaticCaptureTraining`) works on the GPU.
+- **Tensor-parallel 3-D spectral convolution** is not implemented (multi-rank
+  `SpectralConv3d` raises; 2-D is implemented and tested).
+- The demo datasets are synthetic and generated by the included solvers; they
+  are meant to exercise the methods, not to replace validated engineering data.
 
 ---
 
-## ROCm vs CUDA Differences
-
-| Aspect | CUDA (NVIDIA) | ROCm (AMD) |
-|---|---|---|
-| PyTorch wheels | `--index-url .../whl/cu124` | `--index-url .../whl/rocm6.2` |
-| `torch.cuda.*` API | Same | Same (HIP backend) |
-| Distributed backend | NCCL | RCCL (via same `"nccl"` name) |
-| Dockerfile base | `nvcr.io/nvidia/pytorch:...` | `rocm/pytorch:rocm6.2_...` |
-| GPU arch env var | `TORCH_CUDA_ARCH_LIST` | `PYTORCH_ROCM_ARCH` |
-
----
-
-## Running Tests
+## Development
 
 ```bash
-pytest tests/ -v
+pip install -e ".[dev,export]"
+pytest tests/                      # everything (~2 min, includes end-to-end demo runs)
+pytest tests/ -m "not slow"        # skip the end-to-end runs
+ruff check . && ruff format --check .
+mypy
 ```
 
----
+See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Projects built on Solaris
+
+- **[plasma-gsfno](https://github.com/FlashyFlash3011/plasma-gsfno)** — FNO surrogate for the
+  Grad–Shafranov tokamak equilibrium (coil/vacuum flux + profiles → poloidal flux ψ(R, Z)).
 
 ## License
 
