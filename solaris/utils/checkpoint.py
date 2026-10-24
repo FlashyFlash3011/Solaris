@@ -21,6 +21,8 @@ from typing import Any
 
 import torch
 
+from solaris.core.serialization import load_file
+
 
 def save_checkpoint(
     path: str | Path,
@@ -69,6 +71,7 @@ def load_checkpoint(
     optimizer: torch.optim.Optimizer | None = None,
     scheduler=None,
     map_location: str | torch.device | None = None,
+    trusted: bool = False,
 ) -> dict[str, Any]:
     """Load a checkpoint and restore model (+ optionally optimizer/scheduler) state.
 
@@ -84,10 +87,13 @@ def load_checkpoint(
     scheduler : optional
     map_location :
         Passed to ``torch.load``. Defaults to ``"cuda"`` if available else ``"cpu"``.
+    trusted :
+        ``False`` (default) refuses files containing arbitrary Python objects
+        (``weights_only=True``); set ``True`` only for files you created.
     """
     if map_location is None:
         map_location = "cuda" if torch.cuda.is_available() else "cpu"
-    ckpt = torch.load(path, map_location=map_location, weights_only=False)
+    ckpt = load_file(path, map_location=map_location, trusted=trusted)
     model.load_state_dict(ckpt["model_state_dict"])
     if optimizer is not None and "optimizer_state_dict" in ckpt:
         optimizer.load_state_dict(ckpt["optimizer_state_dict"])
@@ -166,6 +172,7 @@ def load_checkpoint_distributed(
     optimizer: torch.optim.Optimizer | None = None,
     scheduler=None,
     map_location: str | torch.device | None = None,
+    trusted: bool = False,
 ) -> dict[str, Any]:
     """Load a checkpoint written by :func:`save_checkpoint_distributed`.
 
@@ -182,7 +189,7 @@ def load_checkpoint_distributed(
         and any ``extra`` entries).
     """
     if not _is_fsdp(model):
-        return load_checkpoint(path, model, optimizer, scheduler, map_location)
+        return load_checkpoint(path, model, optimizer, scheduler, map_location, trusted)
 
     import torch.distributed.checkpoint as dcp
     from torch.distributed.checkpoint.state_dict import get_state_dict, set_state_dict
@@ -204,7 +211,7 @@ def load_checkpoint_distributed(
     meta_path = path / "meta.pt"
     meta: dict[str, Any] = {}
     if meta_path.exists():
-        meta = torch.load(meta_path, map_location="cpu", weights_only=False)
+        meta = load_file(meta_path, map_location="cpu", trusted=trusted)
     if scheduler is not None and "scheduler_state_dict" in meta:
         scheduler.load_state_dict(meta["scheduler_state_dict"])
     return meta

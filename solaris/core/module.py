@@ -13,6 +13,7 @@ import torch
 import torch.nn as nn
 
 from solaris.core.meta import ModelMetaData
+from solaris.core.serialization import load_file
 
 
 class Module(nn.Module):
@@ -119,6 +120,7 @@ class Module(nn.Module):
         cls,
         path: str | Path,
         map_location: str | torch.device | None = None,
+        trusted: bool = False,
     ) -> "Module":
         """Reconstruct model from a checkpoint saved with :meth:`save`.
 
@@ -127,13 +129,16 @@ class Module(nn.Module):
         path :
             Path to the ``.pt`` checkpoint file.
         map_location :
-            Passed directly to ``torch.load`` for device remapping. If ``None``
-            and a ROCm/CUDA GPU is available the checkpoint is loaded on GPU;
-            otherwise CPU.
+            Device to load onto (and move the model to). If ``None`` and a
+            ROCm/CUDA GPU is available the GPU is used; otherwise CPU.
+        trusted :
+            ``False`` (default) loads with ``weights_only=True``, which refuses
+            files containing arbitrary Python objects (unpickling those can run
+            code). Set ``True`` only for checkpoints you created yourself.
         """
         if map_location is None:
             map_location = "cuda" if torch.cuda.is_available() else "cpu"
-        ckpt = torch.load(path, map_location=map_location, weights_only=False)
+        ckpt = load_file(path, map_location=map_location, trusted=trusted)
         model = cls(**ckpt["init_args"])
         model.load_state_dict(ckpt["state_dict"])
         return model.to(map_location)
@@ -143,6 +148,7 @@ class Module(nn.Module):
         cls,
         path: str | Path,
         map_location: str | torch.device | None = None,
+        trusted: bool = False,
     ) -> "Module":
         """Reconstruct any Solaris model from a checkpoint without knowing its class.
 
@@ -155,11 +161,13 @@ class Module(nn.Module):
         path :
             Path to a ``.pt`` file produced by :meth:`save`.
         map_location :
-            Device remapping passed to ``torch.load``.
+            Device to load onto (and move the model to).
+        trusted :
+            See :meth:`load`.
         """
         if map_location is None:
             map_location = "cuda" if torch.cuda.is_available() else "cpu"
-        ckpt = torch.load(path, map_location=map_location, weights_only=False)
+        ckpt = load_file(path, map_location=map_location, trusted=trusted)
         dotted: str = ckpt["class"]  # e.g. "solaris.models.fno.FNO"
         module_path, class_name = dotted.rsplit(".", 1)
         klass = getattr(importlib.import_module(module_path), class_name)

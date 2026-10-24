@@ -173,3 +173,76 @@ def test_module_load_honours_map_location(tmp_path):
     m = FNO(1, 1, 8, 1, 4)
     m.save(tmp_path / "m.pt")
     assert FNO.load(tmp_path / "m.pt", map_location="cuda").device.type == "cuda"
+
+
+# --- Safe checkpoint loading -----------------------------------------------------
+
+
+class _Payload:
+    """Pickles to a call of ``print`` — stands in for malicious code in a file."""
+
+    def __reduce__(self):
+        return (print, ("payload executed",))
+
+
+def _poisoned_module_checkpoint(path):
+    from solaris.models import FNO
+
+    m = FNO(1, 1, 8, 1, 4, norm=None)
+    torch.save(
+        {
+            "state_dict": m.state_dict(),
+            "init_args": m._init_args,
+            "class": "solaris.models.fno.FNO",
+            "solaris_version": "0.2.0",
+            "evil": _Payload(),
+        },
+        path,
+    )
+
+
+def test_module_load_refuses_code_in_checkpoint_by_default(tmp_path, capsys):
+    import pickle
+
+    from solaris.models import FNO
+
+    _poisoned_module_checkpoint(tmp_path / "m.pt")
+    with pytest.raises(pickle.UnpicklingError, match="trusted=True"):
+        FNO.load(tmp_path / "m.pt", map_location="cpu")
+    with pytest.raises(pickle.UnpicklingError):
+        Module.from_checkpoint(tmp_path / "m.pt", map_location="cpu")
+    assert "payload executed" not in capsys.readouterr().out
+
+
+def test_module_load_trusted_allows_arbitrary_objects(tmp_path, capsys):
+    from solaris.models import FNO
+
+    _poisoned_module_checkpoint(tmp_path / "m.pt")
+    FNO.load(tmp_path / "m.pt", map_location="cpu", trusted=True)
+    assert "payload executed" in capsys.readouterr().out
+
+
+def test_load_checkpoint_refuses_code_by_default(tmp_path):
+    import pickle
+
+    from solaris.utils import load_checkpoint, save_checkpoint
+
+    model = torch.nn.Linear(2, 2)
+    save_checkpoint(tmp_path / "c.pt", model, extra={"evil": _Payload()})
+    with pytest.raises(pickle.UnpicklingError, match="trusted=True"):
+        load_checkpoint(tmp_path / "c.pt", model, map_location="cpu")
+
+
+def test_safe_loading_round_trips_normal_checkpoints(tmp_path):
+    from solaris.models import ConstrainedFNO
+    from solaris.utils import load_checkpoint, save_checkpoint
+
+    m = ConstrainedFNO(1, 1, 8, 1, [4, 4], constraint="dirichlet", boundary_value=0.5, norm=None)
+    m.save(tmp_path / "m.pt")
+    assert isinstance(Module.from_checkpoint(tmp_path / "m.pt", map_location="cpu"), ConstrainedFNO)
+
+    opt = torch.optim.AdamW(m.parameters())
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, 10)
+    save_checkpoint(tmp_path / "c.pt", m, opt, sched, epoch=2, extra={"modes": 4, "name": "x"})
+    ckpt = load_checkpoint(tmp_path / "c.pt", m, opt, sched, map_location="cpu")
+    assert ckpt["epoch"] == 2 and ckpt["name"] == "x"
