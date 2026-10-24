@@ -27,7 +27,8 @@ class FourierEmbedding(nn.Module):
 
     def __init__(self, in_features: int, embed_dim: int, scale: float = 1.0) -> None:
         super().__init__()
-        assert embed_dim % 2 == 0, "embed_dim must be even"
+        if embed_dim % 2:
+            raise ValueError(f"embed_dim must be even (cos/sin pairs), got {embed_dim}")
         B = torch.randn(in_features, embed_dim // 2) * scale
         self.register_buffer("B", B)
 
@@ -50,7 +51,7 @@ class PositionalEmbedding(nn.Module):
     Parameters
     ----------
     embed_dim : int
-        Embedding dimension (must be even).
+        Embedding dimension (odd sizes are supported).
     max_len : int
         Maximum sequence length.
     """
@@ -63,11 +64,15 @@ class PositionalEmbedding(nn.Module):
             torch.arange(0, embed_dim, 2, dtype=torch.float) * (-math.log(10000.0) / embed_dim)
         )
         pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term[: embed_dim // 2])
         self.register_buffer("pe", pe.unsqueeze(0))  # (1, max_len, embed_dim)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Add positional embedding to x. x: (batch, seq_len, embed_dim)."""
+        if x.size(1) > self.pe.size(1):
+            raise ValueError(
+                f"sequence length {x.size(1)} exceeds max_len={self.pe.size(1)} of this embedding"
+            )
         return x + self.pe[:, : x.size(1)]
 
 
@@ -94,7 +99,7 @@ class SinusoidalTimestepEmbedding(nn.Module):
         timesteps : Tensor, shape (batch,) — continuous or integer timesteps.
         Returns
         -------
-        Tensor, shape (batch, embed_dim)
+        Tensor, shape (batch, embed_dim)  (an odd embed_dim gets one zero column)
         """
         half = self.embed_dim // 2
         freqs = torch.exp(
@@ -103,4 +108,7 @@ class SinusoidalTimestepEmbedding(nn.Module):
             / half
         )
         args = timesteps[:, None].float() * freqs[None]
-        return torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
+        emb = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
+        if self.embed_dim % 2:
+            emb = torch.nn.functional.pad(emb, (0, 1))
+        return emb
