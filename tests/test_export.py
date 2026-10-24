@@ -14,6 +14,16 @@ _HAVE_EXPORT = all(
 )
 pytestmark = pytest.mark.skipif(not _HAVE_EXPORT, reason="needs solaris-rocm[export]")
 
+_SPECTRAL = {"fno1d", "fno2d", "fno3d", "afno"}
+
+
+def _ort_version() -> tuple[int, int]:
+    import onnxruntime
+
+    major, minor = onnxruntime.__version__.split(".")[:2]
+    return int(major), int(minor)
+
+
 CASES = {
     "mlp": (lambda: FullyConnected(3, 2, 16, 2), (4, 3)),
     "fno1d": (lambda: FNO(1, 1, 8, 1, 4, dim=1, norm=None), (2, 1, 32)),
@@ -26,11 +36,17 @@ CASES = {
 @pytest.mark.parametrize("name", list(CASES))
 def test_export_matches_pytorch(name, tmp_path):
     factory, shape = CASES[name]
+    if name in _SPECTRAL and _ort_version() < (1, 24):
+        pytest.skip("onnxruntime < 1.24 cannot run exported inverse real FFTs (1.31 can)")
     torch.manual_seed(0)
     model = factory()
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         export_onnx(model, torch.randn(*shape), tmp_path / f"{name}.onnx")
-    mismatches = [str(w.message) for w in caught if "outputs differ" in str(w.message)]
-    assert not mismatches, mismatches
+    problems = [
+        str(w.message)
+        for w in caught
+        if "outputs differ" in str(w.message) or "validation skipped" in str(w.message)
+    ]
+    assert not problems, problems
     assert (tmp_path / f"{name}.onnx").stat().st_size > 0
