@@ -414,6 +414,7 @@ def train(args):
         n_test=args.n_val,
         H=args.resolution,
         W=args.resolution,
+        out_path=Path(args.data) if args.data else None,
     )
     log.info(f"Loading dataset from {data_path} …")
     d = np.load(data_path)
@@ -617,6 +618,11 @@ if __name__ == "__main__":
         help="Normalisation inside Fourier blocks (none = reference FNO)",
     )
     p.add_argument("--checkpoint_dir", default=str(Path(__file__).parent / "checkpoints"))
+    p.add_argument(
+        "--data",
+        default=None,
+        help="Dataset .npz to use/create (default: data/ next to this script, named by size)",
+    )
     p.add_argument(
         "--model",
         default="fno",
